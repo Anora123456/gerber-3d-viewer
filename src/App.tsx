@@ -221,6 +221,10 @@ function App() {
   const [bomQuery, setBomQuery] = useState('')
   const [confirmedBomIds, setConfirmedBomIds] = useState<Set<string>>(() => new Set())
   const [selectedBomId, setSelectedBomId] = useState<string | null>(null)
+  const [selectedComponentDesignator, setSelectedComponentDesignator] = useState<string | null>(null)
+  const [componentRotationOffsets, setComponentRotationOffsets] = useState<Map<string, number>>(
+    () => new Map(),
+  )
   const [bomSelectionRevision, setBomSelectionRevision] = useState(0)
   const [bomCellEdit, setBomCellEdit] = useState<BomCellEdit | null>(null)
   const [pendingBomItems, setPendingBomItems] = useState<PendingBomItem[]>([])
@@ -277,6 +281,8 @@ function App() {
         setLoading({ active: true, progress, file })
       })
       setBoard(result)
+      setSelectedComponentDesignator(null)
+      setComponentRotationOffsets(new Map())
       setCameraPreset('iso')
       setCameraRevision((revision) => revision + 1)
       return true
@@ -308,6 +314,27 @@ function App() {
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [componentLibraryPageOpen])
+
+  useEffect(() => {
+    if (!selectedComponentDesignator || componentLibraryPageOpen) return
+    const rotateSelectedComponent = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return
+      const target = event.target
+      if (target instanceof Element && target.closest('button, input, select, textarea, a, [contenteditable="true"]')) {
+        return
+      }
+      if (target instanceof HTMLElement && target !== document.body && !target.closest('.viewer-host')) return
+
+      event.preventDefault()
+      setComponentRotationOffsets((current) => {
+        const next = new Map(current)
+        next.set(selectedComponentDesignator, ((next.get(selectedComponentDesignator) ?? 0) + 90) % 360)
+        return next
+      })
+    }
+    window.addEventListener('keydown', rotateSelectedComponent)
+    return () => window.removeEventListener('keydown', rotateSelectedComponent)
+  }, [componentLibraryPageOpen, selectedComponentDesignator])
 
   useEffect(() => {
     if (!selectedBomId) return
@@ -344,6 +371,7 @@ function App() {
     setBomQuery('')
     setConfirmedBomIds(new Set())
     setSelectedBomId(null)
+    setSelectedComponentDesignator(null)
     setBomCellEdit(null)
   }
 
@@ -392,6 +420,8 @@ function App() {
         const parsed = await parsePlacementFile(file)
         setPlacementData(parsed)
         setPlacementFile(file)
+        setSelectedComponentDesignator(null)
+        setComponentRotationOffsets(new Map())
       } else {
         const parsed = await parseComponentLibraryFile(file)
         clearManualLibraryModels()
@@ -452,8 +482,10 @@ function App() {
     [board, placementData],
   )
   const selectedDesignators = useMemo(
-    () => bomData?.items.find((item) => item.id === selectedBomId)?.designators ?? [],
-    [bomData, selectedBomId],
+    () => selectedComponentDesignator
+      ? [selectedComponentDesignator]
+      : bomData?.items.find((item) => item.id === selectedBomId)?.designators ?? [],
+    [bomData, selectedBomId, selectedComponentDesignator],
   )
   const footprintSourceMatches = useMemo(
     () => matchBomFootprintSources(bomData?.items ?? []),
@@ -645,6 +677,7 @@ function App() {
   }
 
   const toggleSelectedBomItem = (itemId: string) => {
+    setSelectedComponentDesignator(null)
     setSelectedBomId((current) => current === itemId ? null : itemId)
   }
 
@@ -657,6 +690,7 @@ function App() {
     setBomQuery('')
     setBomCellEdit(null)
     setSelectedBomId(item.id)
+    setSelectedComponentDesignator(normalizedDesignator)
     setBomSelectionRevision((revision) => revision + 1)
   }
 
@@ -701,6 +735,11 @@ function App() {
       return next
     })
     setSelectedBomId((current) => current === item.id ? null : current)
+    setSelectedComponentDesignator((current) => (
+      current && item.designators.some((designator) => designator.toLocaleUpperCase() === current)
+        ? null
+        : current
+    ))
     setBomCellEdit((current) => current?.itemId === item.id ? null : current)
     setBomLibraryMatches((current) => {
       const next = new Map(current)
@@ -1402,7 +1441,10 @@ function App() {
                             <button
                               className="bom-action-button replace"
                               type="button"
-                              onClick={() => setSelectedBomId(item.id)}
+                              onClick={() => {
+                                setSelectedComponentDesignator(null)
+                                setSelectedBomId(item.id)
+                              }}
                               title={`替换元件 ${bomPrimaryText(item)}`}
                             >
                               <RefreshCw size={12} />
@@ -1511,6 +1553,7 @@ function App() {
             alignment={placementAlignment}
             bomItems={pcbBomItems}
             selectedDesignators={selectedDesignators}
+            rotationOffsets={componentRotationOffsets}
             onComponentSelect={selectBomItemByDesignator}
           />
 

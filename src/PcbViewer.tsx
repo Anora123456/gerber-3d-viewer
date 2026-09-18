@@ -32,6 +32,7 @@ interface PcbViewerProps {
   alignment: PlacementAlignment | null
   bomItems: BomItem[]
   selectedDesignators: string[]
+  rotationOffsets: ReadonlyMap<string, number>
   onComponentSelect: (designator: string) => void
 }
 
@@ -240,6 +241,7 @@ function createPlacementObject(
       side === 'bottom' ? -surfaceOffset : surfaceOffset,
     )
     marker.rotation.z = THREE.MathUtils.degToRad(placement.rotation)
+    marker.userData.baseRotation = placement.rotation
     marker.userData.surfaceSide = side
     marker.userData.designator = designator
     marker.userData.placementMarker = true
@@ -296,6 +298,15 @@ function createPlacementObject(
   })
 
   return root
+}
+
+function applyComponentRotations(root: THREE.Group, rotationOffsets: ReadonlyMap<string, number>) {
+  root.children.forEach((child) => {
+    const designator = child.userData.designator
+    const baseRotation = child.userData.baseRotation
+    if (typeof designator !== 'string' || typeof baseRotation !== 'number') return
+    child.rotation.z = THREE.MathUtils.degToRad(baseRotation + (rotationOffsets.get(designator) ?? 0))
+  })
 }
 
 function createFallbackBoard(board: ParsedBoard, thickness: number): THREE.Group {
@@ -833,6 +844,7 @@ export default function PcbViewer({
   alignment,
   bomItems,
   selectedDesignators,
+  rotationOffsets,
   onComponentSelect,
 }: PcbViewerProps) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -846,6 +858,7 @@ export default function PcbViewer({
   const animationRef = useRef<number | null>(null)
   const pixelCheckRequestedRef = useRef(true)
   const visibilityRef = useRef(visibility)
+  const rotationOffsetsRef = useRef(rotationOffsets)
   const onComponentSelectRef = useRef(onComponentSelect)
   const [renderError, setRenderError] = useState<string | null>(null)
   const [viewportRevision, setViewportRevision] = useState(0)
@@ -871,6 +884,7 @@ export default function PcbViewer({
       renderer.toneMappingExposure = 1.05
       renderer.shadowMap.enabled = true
       renderer.shadowMap.type = THREE.PCFSoftShadowMap
+      renderer.domElement.tabIndex = 0
       host.appendChild(renderer.domElement)
 
       const controls = new OrbitControls(camera, renderer.domElement)
@@ -898,6 +912,7 @@ export default function PcbViewer({
       }
       const handlePointerDown = (event: PointerEvent) => {
         if (event.button !== 0) return
+        renderer.domElement.focus({ preventScroll: true })
         pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY }
       }
       const handlePointerUp = (event: PointerEvent) => {
@@ -1104,11 +1119,20 @@ export default function PcbViewer({
         pixelCheckRequestedRef.current = true
       },
     )
+    applyComponentRotations(object, rotationOffsetsRef.current)
     scene.add(object)
     componentRootRef.current = object
     if (cameraRef.current) applyComponentVisibility(object, visibility.components, cameraRef.current.position.z)
     pixelCheckRequestedRef.current = true
   }, [board, thickness, alignment, bomItems, selectedDesignators, visibility.components])
+
+  useEffect(() => {
+    rotationOffsetsRef.current = rotationOffsets
+    const root = componentRootRef.current
+    if (!root) return
+    applyComponentRotations(root, rotationOffsets)
+    pixelCheckRequestedRef.current = true
+  }, [rotationOffsets])
 
   useEffect(() => {
     visibilityRef.current = visibility
