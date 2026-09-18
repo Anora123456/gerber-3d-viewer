@@ -8,7 +8,6 @@ import {
 } from 'react'
 import {
   AlertTriangle,
-  ArrowLeft,
   ArrowDownToLine,
   ArrowUpToLine,
   CheckCircle2,
@@ -1693,16 +1692,6 @@ function App() {
             </div>
             {componentLibraryPageView === 'materials' && (
               <div className="library-header-actions">
-                <button
-                  className="library-view-toggle"
-                  type="button"
-                  aria-label="打开金蝶连接配置"
-                  title="打开金蝶连接配置"
-                  onClick={() => setComponentLibraryPageView('connection')}
-                >
-                  <ArrowLeft size={15} />
-                  <span>连接配置</span>
-                </button>
                 <button
                   className="library-back-button"
                   type="button"

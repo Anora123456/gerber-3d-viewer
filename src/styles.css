@@ -358,7 +358,6 @@ button {
   gap: 8px;
 }
 
-.library-view-toggle,
 .library-back-button {
   display: inline-flex;
   height: 34px;
@@ -374,25 +373,12 @@ button {
   cursor: pointer;
 }
 
-.library-view-toggle {
-  border-color: #315e94;
-  color: #cfe1fb;
-  background: #1b3554;
-}
-
-.library-view-toggle:hover {
-  border-color: #4e80ba;
-  color: #ffffff;
-  background: #24486f;
-}
-
 .library-back-button:hover {
   border-color: #708078;
   color: #edf0ed;
   background: #303a32;
 }
 
-.library-view-toggle:disabled,
 .library-back-button:disabled {
   border-color: #3b433e;
   color: #737d76;
@@ -2788,19 +2774,6 @@ button {
 
   .kingdee-config-form {
     gap: 18px;
-  }
-
-}
-
-@media (max-width: 430px) {
-  .library-view-toggle span {
-    display: none;
-  }
-
-  .library-view-toggle {
-    width: 34px;
-    justify-content: center;
-    padding: 0;
   }
 
 }
