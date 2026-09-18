@@ -40,6 +40,7 @@ interface PcbViewerProps {
   cameraRevision: number
   alignment: PlacementAlignment | null
   bomItems: BomItem[]
+  footprintModelOverrides: ReadonlyMap<string, FootprintModel>
   selectedDesignators: string[]
   selectionRevision: number
   bomRowOrientations: ReadonlyMap<string, PackageOrientation>
@@ -259,6 +260,7 @@ function createPlacementObject(
   thickness: number,
   alignment: PlacementAlignment,
   bomItems: BomItem[],
+  footprintModelOverrides: ReadonlyMap<string, FootprintModel>,
   selectedDesignators: string[],
   getBomRowOrientation: (bomItemId: string) => PackageOrientation | undefined,
   onModelProgress: () => void,
@@ -293,7 +295,7 @@ function createPlacementObject(
     const designator = placement.designator.trim().toUpperCase()
     const item = itemByDesignator.get(designator)
     if (!item) return
-    const model = matchFootprintModel(item)
+    const model = footprintModelOverrides.get(item.id) ?? matchFootprintModel(item)
     if (!model) return
     const isSelected = selected.has(designator)
     const side: SurfaceSide = placement.side === 'bottom' ? 'bottom' : 'top'
@@ -1194,6 +1196,7 @@ export default function PcbViewer({
   cameraRevision,
   alignment,
   bomItems,
+  footprintModelOverrides,
   selectedDesignators,
   selectionRevision,
   bomRowOrientations,
@@ -1857,6 +1860,7 @@ export default function PcbViewer({
       thickness,
       alignment,
       bomItems,
+      footprintModelOverrides,
       selectedDesignators,
       (bomItemId) => bomRowOrientationsRef.current.get(bomItemId),
       () => {
@@ -1871,7 +1875,7 @@ export default function PcbViewer({
     if (cameraRef.current) applyComponentVisibility(object, visibility.components, cameraRef.current.position.z)
     focusSelectionWhenReady()
     pixelCheckRequestedRef.current = true
-  }, [board, thickness, alignment, bomItems, selectedDesignators, selectionRevision])
+  }, [board, thickness, alignment, bomItems, footprintModelOverrides, selectedDesignators, selectionRevision])
 
   useEffect(() => {
     bomRowOrientationsRef.current = bomRowOrientations

@@ -35,8 +35,9 @@ import PcbViewer, {
   type LayerVisibility,
   type PackageOrientation,
 } from './PcbViewer'
-import FootprintModelBrowser, { type PreviewFootprintModel } from './FootprintModelBrowser'
+import FootprintModelBrowser from './FootprintModelBrowser'
 import KingdeeConnectionPanel from './KingdeeConnectionPanel'
+import StepModelPicker from './StepModelPicker'
 import {
   parseBomFile,
   parsePlacementFile,
@@ -59,7 +60,7 @@ import {
   footprintSources,
   matchBomFootprintSources,
   matchComponentLibraryFootprint,
-  normalizeFootprintName,
+  type FootprintModel,
 } from './footprint-library'
 import {
   matchBomItemToLibrary,
@@ -68,7 +69,6 @@ import {
 } from './component-library-matching'
 import { alignPlacements } from './placement-alignment'
 import { createSampleSources } from './sample-board'
-import { disposeObject3D, parsePreviewModelFile } from './step-model'
 import { syncKingdeeComponentLibrary } from './kingdee-api'
 
 const colorOptions = [
@@ -121,6 +121,12 @@ type PendingBomItem = {
   item: BomItem
   index: number
 }
+
+type MaterialModelBindings = Record<string, string>
+
+const materialModelBindingsStorageKey = 'fabview.kingdee-step-bindings.v1'
+const footprintModelByPath = new Map(footprintModels.map((model) => [model.sourcePath, model]))
+const stepFootprintModels = footprintModels.filter((model) => Boolean(model.stepUrl))
 
 const bomTableColumns: BomColumnDefinition[] = [
   { key: 'check', label: '确认状态', className: 'bom-col-check', headerClassName: 'bom-check-cell', defaultWidth: 36, minWidth: 32, maxWidth: 72 },
@@ -191,8 +197,28 @@ function enrichBomItemFromLibrary(item: BomItem, libraryItem: ComponentLibraryIt
   }
 }
 
-function disposePreviewFootprintModel(model: PreviewFootprintModel) {
-  if (model.object) disposeObject3D(model.object)
+function materialModelBindingKey(item: ComponentLibraryItem): string {
+  return item.sku.trim() ? `sku:${item.sku.trim()}` : `id:${item.id}`
+}
+
+function loadMaterialModelBindings(): MaterialModelBindings {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(materialModelBindingsStorageKey) ?? '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function saveMaterialModelBindings(bindings: MaterialModelBindings) {
+  try {
+    localStorage.setItem(materialModelBindingsStorageKey, JSON.stringify(bindings))
+  } catch {
+    // The active binding still works when browser storage is unavailable.
+  }
 }
 
 function App() {
@@ -200,7 +226,6 @@ function App() {
   const bomInputRef = useRef<HTMLInputElement>(null)
   const bomTableWrapRef = useRef<HTMLDivElement | null>(null)
   const placementInputRef = useRef<HTMLInputElement>(null)
-  const manualModelInputRef = useRef<HTMLInputElement>(null)
   const [board, setBoard] = useState<ParsedBoard | null>(null)
   const [gerberImportName, setGerberImportName] = useState('内置示例')
   const [bomFile, setBomFile] = useState<File | null>(null)
@@ -219,12 +244,10 @@ function App() {
   const [kingdeeLastSync, setKingdeeLastSync] = useState<Date | null>(null)
   const [componentLibraryQuery, setComponentLibraryQuery] = useState('')
   const [componentLibraryFieldFilter, setComponentLibraryFieldFilter] = useState<string | null>(null)
-  const [manualLibraryModels, setManualLibraryModels] = useState<Map<string, PreviewFootprintModel>>(
-    () => new Map(),
+  const [materialModelBindings, setMaterialModelBindings] = useState<MaterialModelBindings>(
+    loadMaterialModelBindings,
   )
-  const manualLibraryModelsRef = useRef(manualLibraryModels)
   const [manualModelTargetId, setManualModelTargetId] = useState<string | null>(null)
-  const [manualModelLoadingId, setManualModelLoadingId] = useState<string | null>(null)
   const [selectedLibraryItemId, setSelectedLibraryItemId] = useState<string | null>(null)
   const [selectedLibraryModelPath, setSelectedLibraryModelPath] = useState<string | null | undefined>(undefined)
   const [bomQuery, setBomQuery] = useState('')
@@ -287,13 +310,8 @@ function App() {
     })
   }
 
-  const clearManualLibraryModels = () => {
-    manualLibraryModelsRef.current.forEach(disposePreviewFootprintModel)
-    const emptyModels = new Map<string, PreviewFootprintModel>()
-    manualLibraryModelsRef.current = emptyModels
-    setManualLibraryModels(emptyModels)
+  const resetLibraryModelSelection = () => {
     setManualModelTargetId(null)
-    setManualModelLoadingId(null)
     setSelectedLibraryItemId(null)
     setSelectedLibraryModelPath(undefined)
   }
@@ -324,23 +342,18 @@ function App() {
   }, [])
 
   useEffect(() => {
-    manualLibraryModelsRef.current = manualLibraryModels
-  }, [manualLibraryModels])
-
-  useEffect(() => () => {
-    manualLibraryModelsRef.current.forEach(disposePreviewFootprintModel)
-  }, [])
-
-  useEffect(() => {
     if (!componentLibraryPageOpen) return
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && kingdeeDatabaseConnected && componentLibraryData) {
+      if (event.key !== 'Escape') return
+      if (manualModelTargetId) {
+        setManualModelTargetId(null)
+      } else if (kingdeeDatabaseConnected && componentLibraryData) {
         setComponentLibraryPageOpen(false)
       }
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [componentLibraryData, componentLibraryPageOpen, kingdeeDatabaseConnected])
+  }, [componentLibraryData, componentLibraryPageOpen, kingdeeDatabaseConnected, manualModelTargetId])
 
   useEffect(() => {
     if (!selectedBomItem || componentLibraryPageOpen) return
@@ -402,7 +415,7 @@ function App() {
     setError(null)
     try {
       const parsed = await syncKingdeeComponentLibrary()
-      clearManualLibraryModels()
+      resetLibraryModelSelection()
       setComponentLibraryData(parsed)
       setComponentLibraryQuery('')
       setComponentLibraryFieldFilter(null)
@@ -576,10 +589,27 @@ function App() {
     })
     return matches
   }, [componentLibraryData])
-  const libraryPreviewModels = useMemo(
-    () => [...footprintModels, ...manualLibraryModels.values()],
-    [manualLibraryModels],
+  const manualLibraryModels = useMemo(() => {
+    const bindings = new Map<string, FootprintModel>()
+    componentLibraryData?.items.forEach((item) => {
+      const modelPath = materialModelBindings[materialModelBindingKey(item)]
+      const model = modelPath ? footprintModelByPath.get(modelPath) : undefined
+      if (model) bindings.set(item.id, model)
+    })
+    return bindings
+  }, [componentLibraryData, materialModelBindings])
+  const manualModelTargetItem = useMemo(
+    () => componentLibraryData?.items.find((item) => item.id === manualModelTargetId) ?? null,
+    [componentLibraryData, manualModelTargetId],
   )
+  const bomFootprintModelOverrides = useMemo(() => {
+    const overrides = new Map<string, FootprintModel>()
+    bomLibraryMatches.forEach((match, bomItemId) => {
+      const model = manualLibraryModels.get(match.libraryItem.id)
+      if (model) overrides.set(bomItemId, model)
+    })
+    return overrides
+  }, [bomLibraryMatches, manualLibraryModels])
   const confirmedBomCount = useMemo(
     () => bomData?.items.filter((item) => confirmedBomIds.has(item.id)).length ?? 0,
     [bomData, confirmedBomIds],
@@ -807,56 +837,38 @@ function App() {
   const openManualModelImport = (itemId: string) => {
     selectComponentLibraryItem(itemId)
     setManualModelTargetId(itemId)
-    manualModelInputRef.current?.click()
   }
 
-  const handleManualModelFile = async (file?: File) => {
-    const itemId = manualModelTargetId
-    if (!file || !itemId) {
-      setManualModelTargetId(null)
-      return
-    }
-    if (!/\.(?:step|stp|glb)$/i.test(file.name)) {
-      setError('3D封装仅支持 STEP、STP 或 GLB 文件')
-      setManualModelTargetId(null)
-      return
-    }
-    if (file.size > 80 * 1024 * 1024) {
-      setError(`${file.name} 超过 80 MB 限制`)
-      setManualModelTargetId(null)
-      return
-    }
-
-    setError(null)
-    setManualModelLoadingId(itemId)
-    try {
-      const object = await parsePreviewModelFile(file)
-      const name = file.name.replace(/\.(?:step|stp|glb)$/i, '')
-      const model: PreviewFootprintModel = {
-        name,
-        normalizedName: normalizeFootprintName(name),
-        sourcePath: `manual:${itemId}:${file.lastModified}:${file.name}`,
-        url: '',
-        object,
+  const bindManualModel = (item: ComponentLibraryItem, model: FootprintModel) => {
+    setMaterialModelBindings((current) => {
+      const next = {
+        ...current,
+        [materialModelBindingKey(item)]: model.sourcePath,
       }
-      const nextModels = new Map(manualLibraryModelsRef.current)
-      const previousModel = nextModels.get(itemId)
-      if (previousModel) disposePreviewFootprintModel(previousModel)
-      nextModels.set(itemId, model)
-      manualLibraryModelsRef.current = nextModels
-      setManualLibraryModels(nextModels)
-      setSelectedLibraryItemId(itemId)
-      setSelectedLibraryModelPath(model.sourcePath)
-    } catch (modelError) {
-      setError(`3D封装导入失败：${modelError instanceof Error ? modelError.message : '无法读取模型文件'}`)
-    } finally {
-      setManualModelLoadingId(null)
-      setManualModelTargetId(null)
-    }
+      saveMaterialModelBindings(next)
+      return next
+    })
+    setSelectedLibraryItemId(item.id)
+    setSelectedLibraryModelPath(model.sourcePath)
+    setManualModelTargetId(null)
+    setError(null)
+  }
+
+  const unbindManualModel = (item: ComponentLibraryItem) => {
+    setMaterialModelBindings((current) => {
+      const next = { ...current }
+      delete next[materialModelBindingKey(item)]
+      saveMaterialModelBindings(next)
+      return next
+    })
+    setSelectedLibraryItemId(item.id)
+    setSelectedLibraryModelPath(componentLibraryFootprintMatches.get(item.id)?.model.sourcePath ?? null)
+    setManualModelTargetId(null)
   }
 
   const closeComponentLibraryPage = () => {
     if (!kingdeeDatabaseConnected || !componentLibraryData) return
+    setManualModelTargetId(null)
     setComponentLibraryPageOpen(false)
     setDraggingImport(null)
     setError(null)
@@ -1175,16 +1187,6 @@ function App() {
               </button>
             </div>
           </div>
-          <input
-            ref={manualModelInputRef}
-            type="file"
-            hidden
-            accept=".step,.stp,.glb"
-            onChange={(event) => {
-              void handleManualModelFile(event.target.files?.[0])
-              event.target.value = ''
-            }}
-          />
         </section>
 
         <section className="sidebar-section">
@@ -1586,6 +1588,7 @@ function App() {
             cameraRevision={cameraRevision}
             alignment={placementAlignment}
             bomItems={pcbBomItems}
+            footprintModelOverrides={bomFootprintModelOverrides}
             selectedDesignators={selectedDesignators}
             selectionRevision={bomSelectionRevision}
             bomRowOrientations={bomRowOrientations}
@@ -1772,7 +1775,7 @@ function App() {
               )}
 
               <FootprintModelBrowser
-                models={libraryPreviewModels}
+                models={footprintModels}
                 selectedModelPath={selectedLibraryModelPath}
                 onSelectedModelPathChange={setSelectedLibraryModelPath}
               />
@@ -1842,7 +1845,6 @@ function App() {
                         {filteredComponentLibraryItems.map((item) => {
                           const manualModel = manualLibraryModels.get(item.id)
                           const automaticMatch = componentLibraryFootprintMatches.get(item.id)
-                          const previewModel = manualModel ?? automaticMatch?.model
                           const modelTitle = manualModel
                             ? `手动绑定：${manualModel.name}`
                             : automaticMatch
@@ -1864,22 +1866,32 @@ function App() {
                               <td>{item.unit || '—'}</td>
                               <td>{item.used || '—'}</td>
                               <td className="library-model-cell" title={modelTitle}>
-                                {previewModel ? (
+                                {manualModel ? (
+                                  <button
+                                    className="library-model-bound-button"
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      openManualModelImport(item.id)
+                                    }}
+                                    title={`手动绑定：${manualModel.name}，点击可更换`}
+                                  >
+                                    <CheckCircle2 size={13} />
+                                    <span>是</span>
+                                  </button>
+                                ) : automaticMatch ? (
                                   <span className="library-model-status"><CheckCircle2 size={13} />是</span>
                                 ) : (
                                   <button
                                     className="library-model-import-button"
                                     type="button"
-                                    disabled={manualModelLoadingId === item.id}
                                     onClick={(event) => {
                                       event.stopPropagation()
                                       openManualModelImport(item.id)
                                     }}
                                   >
-                                    {manualModelLoadingId === item.id
-                                      ? <LoaderCircle className="spin" size={13} />
-                                      : <Upload size={13} />}
-                                    <span>{manualModelLoadingId === item.id ? '解析中' : '手动导入'}</span>
+                                    <Upload size={13} />
+                                    <span>手动导入</span>
                                   </button>
                                 )}
                               </td>
@@ -1910,6 +1922,22 @@ function App() {
               <span>{error}</span>
               <button onClick={() => setError(null)} title="关闭" aria-label="关闭"><X size={16} /></button>
             </div>
+          )}
+
+          {manualModelTargetItem && (
+            <StepModelPicker
+              initialModelPath={
+                manualLibraryModels.get(manualModelTargetItem.id)?.sourcePath
+                ?? componentLibraryFootprintMatches.get(manualModelTargetItem.id)?.model.sourcePath
+              }
+              item={manualModelTargetItem}
+              models={stepFootprintModels}
+              onBind={(model) => bindManualModel(manualModelTargetItem, model)}
+              onClose={() => setManualModelTargetId(null)}
+              onUnbind={manualLibraryModels.has(manualModelTargetItem.id)
+                ? () => unbindManualModel(manualModelTargetItem)
+                : undefined}
+            />
           )}
         </section>
       )}

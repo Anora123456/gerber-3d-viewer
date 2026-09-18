@@ -51,8 +51,18 @@ const stepAssets = import.meta.glob(['/footprint/**/*.step', '/footprint/**/*.st
   query: '?url',
 }) as Record<string, string>
 
-const stepUrlByBasePath = new Map(
-  Object.entries(stepAssets).map(([sourcePath, url]) => [sourcePath.replace(/\.(?:step|stp)$/i, ''), url]),
+const modelAssetByBasePath = new Map(
+  Object.entries(modelAssets).map(([sourcePath, url]) => [
+    sourcePath.replace(/\.glb$/i, ''),
+    { sourcePath, url },
+  ]),
+)
+
+const stepAssetByBasePath = new Map(
+  Object.entries(stepAssets).map(([sourcePath, url]) => [
+    sourcePath.replace(/\.(?:step|stp)$/i, ''),
+    { sourcePath, url },
+  ]),
 )
 
 export function normalizeFootprintName(value: string): string {
@@ -63,14 +73,18 @@ export function normalizeFootprintName(value: string): string {
     .replace(/[^a-z0-9\u3400-\u9fff]+/g, '')
 }
 
-export const footprintModels: FootprintModel[] = Object.entries(modelAssets).map(([sourcePath, url]) => {
-  const name = sourcePath.split('/').pop()?.replace(/\.glb$/i, '') ?? sourcePath
+export const footprintModels: FootprintModel[] = [
+  ...new Set([...modelAssetByBasePath.keys(), ...stepAssetByBasePath.keys()]),
+].map((basePath) => {
+  const modelAsset = modelAssetByBasePath.get(basePath)
+  const stepAsset = stepAssetByBasePath.get(basePath)
+  const name = basePath.split('/').pop() ?? basePath
   return {
     name,
     normalizedName: normalizeFootprintName(name),
-    sourcePath,
-    url,
-    stepUrl: stepUrlByBasePath.get(sourcePath.replace(/\.glb$/i, '')),
+    sourcePath: stepAsset?.sourcePath ?? modelAsset?.sourcePath ?? basePath,
+    url: modelAsset?.url ?? '',
+    stepUrl: stepAsset?.url,
   }
 })
 
