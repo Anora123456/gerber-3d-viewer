@@ -1568,27 +1568,41 @@ button {
   color: #67ae86;
 }
 
-.library-model-bound-button {
-  display: inline-flex;
+.library-model-actions {
+  display: flex;
+  min-width: 0;
   align-items: center;
+  gap: 8px;
+}
+
+.library-model-status {
+  flex: 0 0 auto;
+}
+
+.library-model-replace-button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding: 3px 5px;
-  border: 0;
+  padding: 0 8px;
+  border: 1px solid #4a574f;
   border-radius: 4px;
-  color: #8dc5a4;
-  background: transparent;
+  color: #c5cec8;
+  background: #222a25;
   font: inherit;
-  font-weight: 700;
   cursor: pointer;
 }
 
-.library-model-bound-button svg {
-  color: #67ae86;
+.library-model-replace-button svg {
+  flex: 0 0 auto;
+  color: #91a29a;
 }
 
-.library-model-bound-button:hover {
-  color: #d5eadc;
-  background: #26352c;
+.library-model-replace-button:hover {
+  border-color: #7e9387;
+  color: #f0e3b9;
+  background: #30382f;
 }
 
 .library-model-import-button {

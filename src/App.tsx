@@ -153,7 +153,7 @@ const libraryTableColumns: LibraryColumnDefinition[] = [
   { key: 'disabledStatus', label: '禁用状态', defaultWidth: 150, minWidth: 84, maxWidth: 320 },
   { key: 'unit', label: '单位', defaultWidth: 110, minWidth: 64, maxWidth: 220 },
   { key: 'used', label: '已使用', defaultWidth: 110, minWidth: 64, maxWidth: 220 },
-  { key: 'model', label: '3D封装', defaultWidth: 116, minWidth: 96, maxWidth: 220 },
+  { key: 'model', label: '3D封装', defaultWidth: 180, minWidth: 160, maxWidth: 280 },
 ]
 
 function defaultLibraryColumnWidths(): Record<LibraryColumnKey, number> {
@@ -1845,6 +1845,7 @@ function App() {
                         {filteredComponentLibraryItems.map((item) => {
                           const manualModel = manualLibraryModels.get(item.id)
                           const automaticMatch = componentLibraryFootprintMatches.get(item.id)
+                          const matchedModel = manualModel ?? automaticMatch?.model
                           const modelTitle = manualModel
                             ? `手动绑定：${manualModel.name}`
                             : automaticMatch
@@ -1866,21 +1867,23 @@ function App() {
                               <td>{item.unit || '—'}</td>
                               <td>{item.used || '—'}</td>
                               <td className="library-model-cell" title={modelTitle}>
-                                {manualModel ? (
-                                  <button
-                                    className="library-model-bound-button"
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation()
-                                      openManualModelImport(item.id)
-                                    }}
-                                    title={`手动绑定：${manualModel.name}，点击可更换`}
-                                  >
-                                    <CheckCircle2 size={13} />
-                                    <span>是</span>
-                                  </button>
-                                ) : automaticMatch ? (
-                                  <span className="library-model-status"><CheckCircle2 size={13} />是</span>
+                                {matchedModel ? (
+                                  <div className="library-model-actions">
+                                    <span className="library-model-status"><CheckCircle2 size={13} />是</span>
+                                    <button
+                                      className="library-model-replace-button"
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation()
+                                        openManualModelImport(item.id)
+                                      }}
+                                      title={`替换模型：${matchedModel.name}`}
+                                      aria-label={`替换 ${item.sku || item.materialName} 的3D模型`}
+                                    >
+                                      <RefreshCw size={12} />
+                                      <span>替换模型</span>
+                                    </button>
+                                  </div>
                                 ) : (
                                   <button
                                     className="library-model-import-button"
