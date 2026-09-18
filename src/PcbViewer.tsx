@@ -22,6 +22,11 @@ export interface LayerVisibility {
   grid: boolean
 }
 
+export interface PackageOrientation {
+  rotationZ: number
+  rotationX: number
+}
+
 interface PcbViewerProps {
   board: ParsedBoard | null
   thickness: number
@@ -32,7 +37,7 @@ interface PcbViewerProps {
   alignment: PlacementAlignment | null
   bomItems: BomItem[]
   selectedDesignators: string[]
-  rotationOffsets: ReadonlyMap<string, number>
+  bomRowOrientations: ReadonlyMap<string, PackageOrientation>
   onComponentSelect: (designator: string) => void
 }
 
@@ -198,6 +203,7 @@ function createPlacementObject(
   alignment: PlacementAlignment,
   bomItems: BomItem[],
   selectedDesignators: string[],
+  getBomRowOrientation: (bomItemId: string) => PackageOrientation | undefined,
   onModelProgress: () => void,
 ): THREE.Group {
   const root = new THREE.Group()
@@ -234,6 +240,7 @@ function createPlacementObject(
 
     const marker = new THREE.Group()
     const sideRoot = new THREE.Group()
+    const modelRoot = new THREE.Group()
     const surfaceOffset = thickness / 2 + 0.09
     marker.position.set(
       placement.boardXmm,
@@ -242,10 +249,14 @@ function createPlacementObject(
     )
     marker.rotation.z = THREE.MathUtils.degToRad(placement.rotation)
     marker.userData.baseRotation = placement.rotation
+    marker.userData.bomItemId = item.id
     marker.userData.surfaceSide = side
     marker.userData.designator = designator
     marker.userData.placementMarker = true
     sideRoot.rotation.x = side === 'bottom' ? Math.PI : 0
+    sideRoot.userData.componentSurfaceRoot = true
+    modelRoot.userData.modelOrientationRoot = true
+    sideRoot.add(modelRoot)
     marker.add(sideRoot)
     root.add(marker)
 
@@ -263,8 +274,11 @@ function createPlacementObject(
       )
       selectionRing.position.z = dimensions.height + 0.2
       selectionRing.userData.designator = designator
+      selectionRing.userData.selectionRing = true
       sideRoot.add(selectionRing)
     }
+
+    applyPlacementOrientation(marker, getBomRowOrientation(item.id))
 
     root.userData.modelMatchedCount += 1
     void loadFootprintTemplate(model).then((template) => {
@@ -285,8 +299,8 @@ function createPlacementObject(
         throw new Error(`模型尺寸异常: ${largestDimension.toFixed(3)} mm`)
       }
 
-      sideRoot.add(instance)
-      if (selectionRing) selectionRing.position.z = size.z + 0.2
+      modelRoot.add(instance)
+      applyPlacementOrientation(marker, getBomRowOrientation(item.id))
       root.userData.modelLoadedCount += 1
       onModelProgress()
     }).catch((error: unknown) => {
@@ -300,12 +314,43 @@ function createPlacementObject(
   return root
 }
 
-function applyComponentRotations(root: THREE.Group, rotationOffsets: ReadonlyMap<string, number>) {
+function applyPlacementOrientation(marker: THREE.Object3D, orientation?: PackageOrientation) {
+  const baseRotation = marker.userData.baseRotation
+  if (typeof baseRotation !== 'number') return
+  const rotationZ = orientation?.rotationZ ?? 0
+  const rotationX = orientation?.rotationX ?? 0
+  marker.rotation.z = THREE.MathUtils.degToRad(baseRotation + rotationZ)
+  marker.userData.appliedRotationZ = rotationZ
+  marker.userData.appliedRotationX = rotationX
+
+  const sideRoot = marker.children.find((child) => child.userData.componentSurfaceRoot) as THREE.Group | undefined
+  const modelRoot = sideRoot?.children.find((child) => child.userData.modelOrientationRoot) as THREE.Group | undefined
+  if (!sideRoot || !modelRoot) return
+
+  modelRoot.rotation.x = THREE.MathUtils.degToRad(rotationX)
+  modelRoot.position.z = 0
+  if (modelRoot.children.length === 0) return
+
+  sideRoot.remove(modelRoot)
+  modelRoot.updateMatrixWorld(true)
+  const bounds = new THREE.Box3().setFromObject(modelRoot)
+  const size = bounds.getSize(new THREE.Vector3())
+  modelRoot.position.z = Number.isFinite(bounds.min.z) ? -bounds.min.z : 0
+  sideRoot.add(modelRoot)
+
+  const selectionRing = sideRoot.children.find((child) => child.userData.selectionRing)
+  if (selectionRing && Number.isFinite(size.z)) selectionRing.position.z = size.z + 0.2
+}
+
+function applyBomRowOrientations(
+  root: THREE.Group,
+  bomRowOrientations: ReadonlyMap<string, PackageOrientation>,
+) {
   root.children.forEach((child) => {
-    const designator = child.userData.designator
+    const bomItemId = child.userData.bomItemId
     const baseRotation = child.userData.baseRotation
-    if (typeof designator !== 'string' || typeof baseRotation !== 'number') return
-    child.rotation.z = THREE.MathUtils.degToRad(baseRotation + (rotationOffsets.get(designator) ?? 0))
+    if (typeof bomItemId !== 'string' || typeof baseRotation !== 'number') return
+    applyPlacementOrientation(child, bomRowOrientations.get(bomItemId))
   })
 }
 
@@ -844,7 +889,7 @@ export default function PcbViewer({
   alignment,
   bomItems,
   selectedDesignators,
-  rotationOffsets,
+  bomRowOrientations,
   onComponentSelect,
 }: PcbViewerProps) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -858,7 +903,7 @@ export default function PcbViewer({
   const animationRef = useRef<number | null>(null)
   const pixelCheckRequestedRef = useRef(true)
   const visibilityRef = useRef(visibility)
-  const rotationOffsetsRef = useRef(rotationOffsets)
+  const bomRowOrientationsRef = useRef(bomRowOrientations)
   const onComponentSelectRef = useRef(onComponentSelect)
   const [renderError, setRenderError] = useState<string | null>(null)
   const [viewportRevision, setViewportRevision] = useState(0)
@@ -1009,6 +1054,7 @@ export default function PcbViewer({
         const componentRoot = componentRootRef.current
         if (componentRoot) {
           applyComponentVisibility(componentRoot, visibilityRef.current.components, camera.position.z)
+          const placementMarkers = componentRoot.children.filter((child) => child.userData.placementMarker)
           renderer.domElement.dataset.alignmentMode = String(componentRoot.userData.alignmentMode)
           renderer.domElement.dataset.placementCount = String(componentRoot.userData.placementCount)
           renderer.domElement.dataset.placementInside = String(componentRoot.userData.insideCount)
@@ -1017,7 +1063,13 @@ export default function PcbViewer({
           renderer.domElement.dataset.modelLoaded = String(componentRoot.userData.modelLoadedCount)
           renderer.domElement.dataset.modelFailed = String(componentRoot.userData.modelFailedCount)
           renderer.domElement.dataset.visiblePlacements = String(
-            componentRoot.children.filter((child) => child.visible && child.userData.placementMarker).length,
+            placementMarkers.filter((child) => child.visible).length,
+          )
+          renderer.domElement.dataset.rotatedPlacements = String(
+            placementMarkers.filter((child) => child.userData.appliedRotationZ !== 0).length,
+          )
+          renderer.domElement.dataset.flippedPlacements = String(
+            placementMarkers.filter((child) => child.userData.appliedRotationX !== 0).length,
           )
         } else {
           renderer.domElement.dataset.placementCount = '0'
@@ -1026,6 +1078,8 @@ export default function PcbViewer({
           renderer.domElement.dataset.modelLoaded = '0'
           renderer.domElement.dataset.modelFailed = '0'
           renderer.domElement.dataset.visiblePlacements = '0'
+          renderer.domElement.dataset.rotatedPlacements = '0'
+          renderer.domElement.dataset.flippedPlacements = '0'
         }
         renderer.render(scene, camera)
         if (pixelCheckRequestedRef.current) {
@@ -1115,11 +1169,12 @@ export default function PcbViewer({
       alignment,
       bomItems,
       selectedDesignators,
+      (bomItemId) => bomRowOrientationsRef.current.get(bomItemId),
       () => {
         pixelCheckRequestedRef.current = true
       },
     )
-    applyComponentRotations(object, rotationOffsetsRef.current)
+    applyBomRowOrientations(object, bomRowOrientationsRef.current)
     scene.add(object)
     componentRootRef.current = object
     if (cameraRef.current) applyComponentVisibility(object, visibility.components, cameraRef.current.position.z)
@@ -1127,12 +1182,12 @@ export default function PcbViewer({
   }, [board, thickness, alignment, bomItems, selectedDesignators, visibility.components])
 
   useEffect(() => {
-    rotationOffsetsRef.current = rotationOffsets
+    bomRowOrientationsRef.current = bomRowOrientations
     const root = componentRootRef.current
     if (!root) return
-    applyComponentRotations(root, rotationOffsets)
+    applyBomRowOrientations(root, bomRowOrientations)
     pixelCheckRequestedRef.current = true
-  }, [rotationOffsets])
+  }, [bomRowOrientations])
 
   useEffect(() => {
     visibilityRef.current = visibility

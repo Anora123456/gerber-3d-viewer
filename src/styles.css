@@ -1907,6 +1907,52 @@ button {
   inset: 0;
 }
 
+.bom-row-orientation-controls {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 3;
+  display: flex;
+  gap: 6px;
+}
+
+.bom-row-orientation-controls button {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid rgb(99 120 107 / 70%);
+  border-radius: 5px;
+  color: #d4ddd7;
+  background: rgb(25 33 28 / 88%);
+  backdrop-filter: blur(8px);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.bom-row-orientation-controls button:hover:not(:disabled),
+.bom-row-orientation-controls button:focus-visible {
+  border-color: #76a98d;
+  color: #f0f4f1;
+  background: rgb(39 54 45 / 94%);
+}
+
+.bom-row-orientation-controls button:disabled {
+  color: #707c74;
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.bom-row-orientation-controls svg {
+  flex: 0 0 auto;
+  color: #75bd96;
+}
+
+.bom-row-orientation-controls button:disabled svg {
+  color: #657169;
+}
+
 .viewer-error,
 .processing-overlay {
   position: absolute;
