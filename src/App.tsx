@@ -215,6 +215,7 @@ function App() {
   const [componentLibraryData, setComponentLibraryData] = useState<ParsedComponentLibraryFile | null>(null)
   const [componentLibraryPageOpen, setComponentLibraryPageOpen] = useState(true)
   const [componentLibraryPageView, setComponentLibraryPageView] = useState<'connection' | 'materials'>('connection')
+  const [kingdeeDatabaseConnected, setKingdeeDatabaseConnected] = useState(false)
   const [kingdeeSyncing, setKingdeeSyncing] = useState(false)
   const [kingdeeLastSync, setKingdeeLastSync] = useState<Date | null>(null)
   const [componentLibraryQuery, setComponentLibraryQuery] = useState('')
@@ -334,11 +335,13 @@ function App() {
   useEffect(() => {
     if (!componentLibraryPageOpen) return
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setComponentLibraryPageOpen(false)
+      if (event.key === 'Escape' && kingdeeDatabaseConnected && componentLibraryData) {
+        setComponentLibraryPageOpen(false)
+      }
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [componentLibraryPageOpen])
+  }, [componentLibraryData, componentLibraryPageOpen, kingdeeDatabaseConnected])
 
   useEffect(() => {
     if (!selectedBomItem || componentLibraryPageOpen) return
@@ -854,6 +857,7 @@ function App() {
   }
 
   const closeComponentLibraryPage = () => {
+    if (!kingdeeDatabaseConnected || !componentLibraryData) return
     setComponentLibraryPageOpen(false)
     setDraggingImport(null)
     setError(null)
@@ -1678,9 +1682,13 @@ function App() {
               <button
                 className="library-view-toggle"
                 type="button"
+                disabled={!kingdeeDatabaseConnected}
                 aria-label={componentLibraryPageView === 'connection' ? '查看 BOM 数据' : '打开金蝶连接配置'}
-                title={componentLibraryPageView === 'connection' ? '查看 BOM 数据' : '打开金蝶连接配置'}
+                title={!kingdeeDatabaseConnected
+                  ? '连接金蝶数据库后可用'
+                  : componentLibraryPageView === 'connection' ? '查看 BOM 数据' : '打开金蝶连接配置'}
                 onClick={() => {
+                  if (!kingdeeDatabaseConnected) return
                   if (componentLibraryPageView === 'connection') {
                     setComponentLibraryPageView('materials')
                     if (!componentLibraryData && !kingdeeSyncing) {
@@ -1697,8 +1705,11 @@ function App() {
               <button
                 className="library-back-button"
                 type="button"
+                disabled={!kingdeeDatabaseConnected || !componentLibraryData}
                 aria-label="返回 PCB"
-                title="返回 PCB"
+                title={!kingdeeDatabaseConnected
+                  ? '连接金蝶数据库后可用'
+                  : !componentLibraryData ? '请先同步金蝶物料' : '返回 PCB'}
                 onClick={closeComponentLibraryPage}
               >
                 <X size={16} />
@@ -1709,9 +1720,12 @@ function App() {
 
           {componentLibraryPageView === 'connection' ? (
             <KingdeeConnectionPanel
-              onSaved={async () => {
+              onConnectionChange={setKingdeeDatabaseConnected}
+              onEnter={async () => {
                 await syncComponentLibraryFromKingdee()
-                setComponentLibraryPageView('materials')
+                setComponentLibraryPageOpen(false)
+                setDraggingImport(null)
+                setError(null)
               }}
             />
           ) : (
