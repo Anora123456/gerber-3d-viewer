@@ -863,6 +863,13 @@ function App() {
     setError(null)
   }
 
+  const openComponentLibraryPage = () => {
+    setComponentLibraryPageView(
+      kingdeeDatabaseConnected && componentLibraryData ? 'materials' : 'connection',
+    )
+    setComponentLibraryPageOpen(true)
+  }
+
   const renderBomColumnGroup = () => (
     <colgroup>
       {bomTableColumns.map((column) => (
@@ -1140,7 +1147,15 @@ function App() {
             <div
               className={`import-target library ${componentLibraryData ? 'ready' : ''}`}
             >
-              <Database size={20} />
+              <button
+                className="library-source-icon-button"
+                type="button"
+                onClick={openComponentLibraryPage}
+                title="打开金蝶 ERP"
+                aria-label="打开金蝶 ERP"
+              >
+                <Database size={20} />
+              </button>
               <div>
                 <strong>金蝶 ERP</strong>
                 <span
@@ -1152,12 +1167,10 @@ function App() {
                 </span>
               </div>
               <button
-                onClick={() => {
-                  setComponentLibraryPageView('connection')
-                  setComponentLibraryPageOpen(true)
-                }}
-                title="连接金蝶 ERP"
-                aria-label="连接金蝶 ERP"
+                type="button"
+                onClick={openComponentLibraryPage}
+                title="打开金蝶 ERP"
+                aria-label="打开金蝶 ERP"
               >
                 <Database size={16} />
               </button>

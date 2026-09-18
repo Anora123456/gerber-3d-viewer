@@ -222,7 +222,7 @@ button {
 .import-target {
   --import-color: var(--accent);
   display: grid;
-  grid-template-columns: 25px minmax(0, 1fr) 30px;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
   align-items: center;
   gap: 8px;
   min-height: 54px;
@@ -239,6 +239,10 @@ button {
 .import-target.library { --import-color: #6ea6a0; }
 
 .import-target > svg {
+  color: var(--import-color);
+}
+
+.import-target > .library-source-icon-button {
   color: var(--import-color);
 }
 
