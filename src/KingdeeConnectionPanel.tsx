@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Check, Database, Eye, EyeOff, LoaderCircle, Save } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Database, Eye, EyeOff, LoaderCircle } from 'lucide-react'
 import {
   fetchKingdeeConfig,
   probeKingdeeConnection,
@@ -13,6 +13,8 @@ interface KingdeeConnectionPanelProps {
 }
 
 type ConnectionState = 'checking' | 'connected' | 'disconnected'
+
+const AUTO_PROBE_DELAY_MS = 500
 
 const emptyConfig: KingdeeConfig = {
   base_url: '',
@@ -28,16 +30,16 @@ const emptyConfig: KingdeeConfig = {
 export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: KingdeeConnectionPanelProps) {
   const formRef = useRef<HTMLFormElement>(null)
   const [config, setConfig] = useState<KingdeeConfig>(emptyConfig)
+  const [configLoaded, setConfigLoaded] = useState(false)
   const [hasSavedSecret, setHasSavedSecret] = useState(false)
   const [secretVisible, setSecretVisible] = useState(false)
-  const [busy, setBusy] = useState<'load' | 'probe' | 'save' | 'enter' | null>('load')
+  const [busy, setBusy] = useState<'load' | 'probe' | 'enter' | null>('load')
   const [connectionState, setConnectionState] = useState<ConnectionState>('checking')
   const [status, setStatus] = useState('正在读取本机配置...')
-  const [statusError, setStatusError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    const loadAndProbe = async () => {
+    const loadConfig = async () => {
       onConnectionChange(false)
       try {
         const saved = await fetchKingdeeConfig()
@@ -45,125 +47,98 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
         const loadedConfig = { ...emptyConfig, ...saved, app_secret: '' }
         setConfig(loadedConfig)
         setHasSavedSecret(saved.has_app_secret)
-        if (!saved.has_app_secret) {
-          setConnectionState('disconnected')
-          setStatus('尚未保存应用密钥')
-          setStatusError(true)
-          return
-        }
-
-        setStatus('正在检测已保存的金蝶数据库...')
-        const result = await probeKingdeeConnection(loadedConfig)
-        if (cancelled) return
-        const connected = result.ok && result.material_access
-        setConnectionState(connected ? 'connected' : 'disconnected')
-        onConnectionChange(connected)
-        setStatus(connected
-          ? `连接成功 · ${result.elapsed_ms} ms · 已验证物料权限`
-          : '金蝶服务已响应，但没有检测到可访问的电子物料')
-        setStatusError(!connected)
+        setConfigLoaded(true)
       } catch (error) {
         if (cancelled) return
         setConnectionState('disconnected')
         onConnectionChange(false)
-        setStatus(error instanceof Error ? error.message : '无法检测金蝶数据库')
-        setStatusError(true)
+        setStatus(error instanceof Error ? error.message : '无法读取本机配置')
       } finally {
         if (!cancelled) setBusy(null)
       }
     }
-    void loadAndProbe()
+    void loadConfig()
     return () => { cancelled = true }
   }, [onConnectionChange])
+
+  useEffect(() => {
+    if (!configLoaded) return
+    const hasRequiredFields = Boolean(
+      config.base_url.trim()
+      && config.dbid.trim()
+      && config.username.trim()
+      && config.appid.trim()
+      && config.org_number.trim()
+      && (hasSavedSecret || config.app_secret),
+    )
+    if (!hasRequiredFields) {
+      setConnectionState('disconnected')
+      onConnectionChange(false)
+      setStatus(hasSavedSecret ? '请填写完整的金蝶连接信息' : '请填写完整的连接信息和 AppSecret')
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      const probe = async () => {
+        setBusy('probe')
+        setConnectionState('checking')
+        onConnectionChange(false)
+        setStatus('正在自动验证登录和物料读取权限...')
+        try {
+          const result = await probeKingdeeConnection(config)
+          if (cancelled) return
+          const connected = result.ok && result.material_access
+          setConnectionState(connected ? 'connected' : 'disconnected')
+          onConnectionChange(connected)
+          setStatus(connected
+            ? `连接成功 · ${result.elapsed_ms} ms · 已验证物料权限`
+            : '金蝶服务已响应，但没有检测到可访问的电子物料')
+        } catch (error) {
+          if (cancelled) return
+          setConnectionState('disconnected')
+          onConnectionChange(false)
+          setStatus(error instanceof Error ? error.message : '无法检测金蝶数据库')
+        } finally {
+          if (!cancelled) setBusy(null)
+        }
+      }
+      void probe()
+    }, AUTO_PROBE_DELAY_MS)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [config, configLoaded, hasSavedSecret, onConnectionChange])
 
   const update = <Key extends keyof KingdeeConfig>(key: Key, value: KingdeeConfig[Key]) => {
     setConfig((current) => ({ ...current, [key]: value }))
     setConnectionState('disconnected')
     onConnectionChange(false)
-    setStatus('连接配置已修改，请重新测试连接')
-    setStatusError(false)
+    setStatus('连接配置已修改，等待自动检测...')
   }
 
   const formIsValid = () => {
     if (!formRef.current?.reportValidity()) return false
     if (!hasSavedSecret && !config.app_secret) {
       setStatus('首次连接时需要填写 AppSecret')
-      setStatusError(true)
       return false
     }
     return true
-  }
-
-  const handleProbe = async () => {
-    if (!formIsValid()) return
-    setBusy('probe')
-    setConnectionState('checking')
-    onConnectionChange(false)
-    setStatus('正在验证登录和物料读取权限...')
-    setStatusError(false)
-    try {
-      const result = await probeKingdeeConnection(config)
-      const connected = result.ok && result.material_access
-      setConnectionState(connected ? 'connected' : 'disconnected')
-      onConnectionChange(connected)
-      setStatus(connected
-        ? `连接成功 · ${result.elapsed_ms} ms · 已验证物料权限`
-        : '金蝶服务已响应，但没有检测到可访问的电子物料')
-      setStatusError(!connected)
-    } catch (error) {
-      setConnectionState('disconnected')
-      onConnectionChange(false)
-      setStatus(error instanceof Error ? error.message : '连接失败')
-      setStatusError(true)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!formIsValid()) return
-    setBusy('save')
-    setConnectionState('checking')
-    onConnectionChange(false)
-    setStatus('正在验证并保存连接配置...')
-    setStatusError(false)
-    try {
-      const result = await probeKingdeeConnection(config)
-      if (!result.ok || !result.material_access) {
-        throw new Error('金蝶服务已响应，但没有检测到可访问的电子物料')
-      }
-      const saved = await saveKingdeeConfig(config)
-      setConfig((current) => ({ ...current, ...saved, app_secret: '' }))
-      setHasSavedSecret(saved.has_app_secret)
-      setConnectionState('connected')
-      onConnectionChange(true)
-      setStatus(`配置已保存 · ${result.elapsed_ms} ms · 已检测到金蝶数据库`)
-    } catch (error) {
-      setConnectionState('disconnected')
-      onConnectionChange(false)
-      setStatus(error instanceof Error ? error.message : '连接验证或保存失败')
-      setStatusError(true)
-    } finally {
-      setBusy(null)
-    }
   }
 
   const handleEnter = async () => {
     if (connectionState !== 'connected' || !formIsValid()) return
     setBusy('enter')
     setStatus('正在同步电子物料并进入 BOM 匹配系统...')
-    setStatusError(false)
     try {
-      const saved = await saveKingdeeConfig(config)
-      setConfig((current) => ({ ...current, ...saved, app_secret: '' }))
-      setHasSavedSecret(saved.has_app_secret)
+      await saveKingdeeConfig(config)
       await onEnter()
     } catch (error) {
       setConnectionState('disconnected')
       onConnectionChange(false)
       setStatus(error instanceof Error ? error.message : '无法进入 BOM 匹配系统')
-      setStatusError(true)
     } finally {
       setBusy(null)
     }
@@ -190,13 +165,7 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
                   ? '检测到金蝶数据库'
                   : '没有检测到金蝶数据库'}
             </strong>
-            <span>
-              {connectionState === 'connected'
-                ? '连接有效，可以进入 BOM 匹配系统'
-                : connectionState === 'checking'
-                  ? '正在验证登录和物料读取权限'
-                  : '请检查下方配置并重新测试连接'}
-            </span>
+            <span>{status}</span>
           </div>
         </div>
         <button
@@ -210,7 +179,12 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
         </button>
       </div>
 
-      <form ref={formRef} className="kingdee-config-form" autoComplete="off" onSubmit={handleSubmit}>
+      <form
+        ref={formRef}
+        className="kingdee-config-form"
+        autoComplete="off"
+        onSubmit={(event) => event.preventDefault()}
+      >
         <label className="kingdee-field kingdee-field-wide">
           <span>服务地址</span>
           <input
@@ -279,16 +253,6 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
         </label>
 
         <div className="kingdee-options-grid">
-          <label className="kingdee-field">
-            <span>使用组织</span>
-            <input
-              required
-              value={config.org_number}
-              onChange={(event) => update('org_number', event.target.value)}
-              placeholder="组织编码"
-              spellCheck={false}
-            />
-          </label>
           <fieldset className="kingdee-field kingdee-protocol-field">
             <legend>登录协议</legend>
             <div className="kingdee-segmented">
@@ -306,25 +270,6 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
               >V2 · SHA-1</button>
             </div>
           </fieldset>
-        </div>
-
-        <div className="kingdee-form-actions">
-          <output className={statusError ? 'error' : ''} aria-live="polite">{status}</output>
-          <div>
-            <button
-              className="kingdee-button secondary"
-              type="button"
-              onClick={() => void handleProbe()}
-              disabled={busy !== null}
-            >
-              {busy === 'probe' ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}
-              <span>测试连接</span>
-            </button>
-            <button className="kingdee-button primary" type="submit" disabled={busy !== null}>
-              {busy === 'save' ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />}
-              <span>保存配置</span>
-            </button>
-          </div>
         </div>
       </form>
     </div>
