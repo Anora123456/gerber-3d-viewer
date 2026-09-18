@@ -152,7 +152,7 @@ const libraryTableColumns: LibraryColumnDefinition[] = [
   { key: 'dataStatus', label: '数据状态', defaultWidth: 150, minWidth: 84, maxWidth: 320 },
   { key: 'disabledStatus', label: '禁用状态', defaultWidth: 150, minWidth: 84, maxWidth: 320 },
   { key: 'unit', label: '单位', defaultWidth: 110, minWidth: 64, maxWidth: 220 },
-  { key: 'model', label: '3D封装', defaultWidth: 180, minWidth: 160, maxWidth: 280 },
+  { key: 'model', label: '3D封装', defaultWidth: 220, minWidth: 210, maxWidth: 320 },
 ]
 
 function defaultLibraryColumnWidths(): Record<LibraryColumnKey, number> {
