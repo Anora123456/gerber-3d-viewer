@@ -11,6 +11,9 @@ coverage/
 vite.config.js
 vite.config.d.ts
 
+# Local KiCad 3D model library (large runtime data)
+/footprint/3dmodels/
+
 # Local environment and logs
 .env
 .env.*
