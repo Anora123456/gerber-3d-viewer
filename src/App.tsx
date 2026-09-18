@@ -1869,7 +1869,7 @@ function App() {
                               <td className="library-model-cell" title={modelTitle}>
                                 {matchedModel ? (
                                   <div className="library-model-actions">
-                                    <span className="library-model-status"><CheckCircle2 size={13} />是</span>
+                                    <span className="library-model-status"><CheckCircle2 size={13} />已匹配</span>
                                     <button
                                       className="library-model-replace-button"
                                       type="button"
@@ -1885,17 +1885,20 @@ function App() {
                                     </button>
                                   </div>
                                 ) : (
-                                  <button
-                                    className="library-model-import-button"
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation()
-                                      openManualModelImport(item.id)
-                                    }}
-                                  >
-                                    <Upload size={13} />
-                                    <span>手动导入</span>
-                                  </button>
+                                  <div className="library-model-actions">
+                                    <span className="library-model-status-placeholder" aria-hidden="true" />
+                                    <button
+                                      className="library-model-import-button"
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation()
+                                        openManualModelImport(item.id)
+                                      }}
+                                    >
+                                      <Upload size={13} />
+                                      <span>手动导入</span>
+                                    </button>
+                                  </div>
                                 )}
                               </td>
                             </tr>

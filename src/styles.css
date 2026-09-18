@@ -1569,18 +1569,26 @@ button {
 }
 
 .library-model-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: 60px 92px;
   min-width: 0;
   align-items: center;
   gap: 8px;
 }
 
 .library-model-status {
-  flex: 0 0 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.library-model-status-placeholder {
+  display: block;
+  width: 60px;
 }
 
 .library-model-replace-button {
   display: inline-flex;
+  width: 92px;
   height: 28px;
   align-items: center;
   justify-content: center;
@@ -1607,8 +1615,7 @@ button {
 
 .library-model-import-button {
   display: inline-flex;
-  width: 100%;
-  max-width: 92px;
+  width: 92px;
   height: 28px;
   align-items: center;
   justify-content: center;
