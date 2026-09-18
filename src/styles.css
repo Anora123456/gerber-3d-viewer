@@ -541,16 +541,10 @@ button {
   gap: 18px;
 }
 
-.kingdee-field-grid,
-.kingdee-options-grid {
+.kingdee-field-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 18px;
-}
-
-.kingdee-options-grid {
-  grid-template-columns: minmax(0, 1fr);
-  align-items: end;
 }
 
 .kingdee-field {
@@ -626,37 +620,6 @@ button {
   background: #eef5ff;
 }
 
-.kingdee-protocol-field {
-  align-self: end;
-}
-
-.kingdee-segmented {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  height: 50px;
-  padding: 4px;
-  border: 1px solid #cbd8ea;
-  border-radius: 7px;
-  background: #f3f6fa;
-}
-
-.kingdee-segmented button {
-  padding: 0 10px;
-  border: 0;
-  border-radius: 5px;
-  color: #687994;
-  background: transparent;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.kingdee-segmented button.active {
-  color: #155ac2;
-  background: #ffffff;
-  box-shadow: 0 1px 4px rgb(16 24 40 / 12%);
-}
 
 .library-page-body {
   display: grid;
@@ -2814,8 +2777,7 @@ button {
     margin-bottom: 22px;
   }
 
-  .kingdee-field-grid,
-  .kingdee-options-grid {
+  .kingdee-field-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 18px;
   }

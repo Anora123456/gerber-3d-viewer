@@ -44,7 +44,7 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
       try {
         const saved = await fetchKingdeeConfig()
         if (cancelled) return
-        const loadedConfig = { ...emptyConfig, ...saved, app_secret: '' }
+        const loadedConfig: KingdeeConfig = { ...emptyConfig, ...saved, protocol: 'v4', app_secret: '' }
         setConfig(loadedConfig)
         setHasSavedSecret(saved.has_app_secret)
         setConfigLoaded(true)
@@ -228,25 +228,6 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
           </div>
         </label>
 
-        <div className="kingdee-options-grid">
-          <fieldset className="kingdee-field kingdee-protocol-field">
-            <legend>登录协议</legend>
-            <div className="kingdee-segmented">
-              <button
-                type="button"
-                className={config.protocol === 'v4' ? 'active' : ''}
-                onClick={() => update('protocol', 'v4')}
-                aria-pressed={config.protocol === 'v4'}
-              >V4 · SHA-256</button>
-              <button
-                type="button"
-                className={config.protocol === 'v2' ? 'active' : ''}
-                onClick={() => update('protocol', 'v2')}
-                aria-pressed={config.protocol === 'v2'}
-              >V2 · SHA-1</button>
-            </div>
-          </fieldset>
-        </div>
       </form>
 
       <div className="kingdee-config-gateway">
