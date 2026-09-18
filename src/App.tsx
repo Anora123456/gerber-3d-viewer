@@ -101,7 +101,7 @@ type BomColumnDefinition = {
   maxWidth: number
 }
 
-type LibraryColumnKey = 'sku' | 'name' | 'dataStatus' | 'disabledStatus' | 'unit' | 'used' | 'model'
+type LibraryColumnKey = 'sku' | 'name' | 'dataStatus' | 'disabledStatus' | 'unit' | 'model'
 
 type LibraryColumnDefinition = {
   key: LibraryColumnKey
@@ -152,7 +152,6 @@ const libraryTableColumns: LibraryColumnDefinition[] = [
   { key: 'dataStatus', label: '数据状态', defaultWidth: 150, minWidth: 84, maxWidth: 320 },
   { key: 'disabledStatus', label: '禁用状态', defaultWidth: 150, minWidth: 84, maxWidth: 320 },
   { key: 'unit', label: '单位', defaultWidth: 110, minWidth: 64, maxWidth: 220 },
-  { key: 'used', label: '已使用', defaultWidth: 110, minWidth: 64, maxWidth: 220 },
   { key: 'model', label: '3D封装', defaultWidth: 180, minWidth: 160, maxWidth: 280 },
 ]
 
@@ -1865,7 +1864,6 @@ function App() {
                               <td>{item.dataStatus || '—'}</td>
                               <td>{item.disabledStatus || '—'}</td>
                               <td>{item.unit || '—'}</td>
-                              <td>{item.used || '—'}</td>
                               <td className="library-model-cell" title={modelTitle}>
                                 {matchedModel ? (
                                   <div className="library-model-actions">
@@ -1905,7 +1903,7 @@ function App() {
                           )
                         })}
                         {filteredComponentLibraryItems.length === 0 && (
-                          <tr><td className="library-table-empty" colSpan={7}>没有匹配的物料</td></tr>
+                          <tr><td className="library-table-empty" colSpan={6}>没有匹配的物料</td></tr>
                         )}
                       </tbody>
                     </table>
