@@ -449,7 +449,7 @@ button {
 }
 
 .kingdee-options-grid {
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(280px, 1.25fr);
+  grid-template-columns: minmax(0, 0.7fr) minmax(280px, 1.25fr);
   align-items: end;
 }
 

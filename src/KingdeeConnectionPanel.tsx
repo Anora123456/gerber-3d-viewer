@@ -182,17 +182,6 @@ export default function KingdeeConnectionPanel({ onSaved }: KingdeeConnectionPan
 
         <div className="kingdee-options-grid">
           <label className="kingdee-field">
-            <span>语言代码</span>
-            <select
-              value={config.lcid}
-              onChange={(event) => update('lcid', event.target.value as KingdeeConfig['lcid'])}
-            >
-              <option value="2052">2052 - 简体中文</option>
-              <option value="1033">1033 - English</option>
-              <option value="3076">3076 - 繁体中文</option>
-            </select>
-          </label>
-          <label className="kingdee-field">
             <span>使用组织</span>
             <input
               required
