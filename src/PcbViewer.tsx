@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
+import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js'
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { renderSVG, renderThree } from 'web-gerber'
 import type { PathSegment, SvgElement } from 'web-gerber'
 import type { BomItem } from './assembly-data'
@@ -37,6 +41,7 @@ interface PcbViewerProps {
   alignment: PlacementAlignment | null
   bomItems: BomItem[]
   selectedDesignators: string[]
+  selectionRevision: number
   bomRowOrientations: ReadonlyMap<string, PackageOrientation>
   onComponentSelect: (designator: string) => void
 }
@@ -209,12 +214,12 @@ function createPlacementObject(
 
   const itemByDesignator = new Map<string, BomItem>()
   bomItems.forEach((item) => item.designators.forEach((designator) => {
-    itemByDesignator.set(designator.toUpperCase(), item)
+    itemByDesignator.set(designator.trim().toUpperCase(), item)
   }))
-  const selected = new Set(selectedDesignators.map((designator) => designator.toUpperCase()))
+  const selected = new Set(selectedDesignators.map((designator) => designator.trim().toUpperCase()))
 
   alignment.placements.forEach((placement) => {
-    const designator = placement.designator.toUpperCase()
+    const designator = placement.designator.trim().toUpperCase()
     const item = itemByDesignator.get(designator)
     if (!item) return
     const model = matchFootprintModel(item)
@@ -269,6 +274,7 @@ function createPlacementObject(
 
       modelRoot.add(instance)
       applyPlacementOrientation(marker, getBomRowOrientation(item.id))
+      marker.userData.modelLoaded = true
       root.userData.modelLoadedCount += 1
       onModelProgress()
     }).catch((error: unknown) => {
@@ -316,6 +322,209 @@ function applyBomRowOrientations(
     if (typeof bomItemId !== 'string' || typeof baseRotation !== 'number') return
     applyPlacementOrientation(child, bomRowOrientations.get(bomItemId))
   })
+}
+
+interface SelectionCameraFocus {
+  bounds: THREE.Box3
+  target: THREE.Vector3
+  position: THREE.Vector3
+  distance: number
+  matchedCount: number
+  screenCoverage: number
+  components: SelectedComponentBounds[]
+}
+
+interface SelectedComponentBounds {
+  marker: THREE.Object3D
+  designator: string
+  bounds: THREE.Box3
+  anchor: THREE.Vector3
+}
+
+interface ProjectedSelectionRange {
+  fits: boolean
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
+interface SelectionOverlayItem {
+  element: HTMLDivElement
+  label: HTMLSpanElement
+  anchor: THREE.Vector3
+  designator: string
+}
+
+const selectionViewportMargin = 0.08
+const selectionFocusDurationMs = 300
+const minimumSelectionDistance = 12
+
+function appendTransformedBoxCorners(
+  box: THREE.Box3,
+  matrix: THREE.Matrix4,
+  points: THREE.Vector3[],
+  bounds: THREE.Box3,
+) {
+  for (const x of [box.min.x, box.max.x]) {
+    for (const y of [box.min.y, box.max.y]) {
+      for (const z of [box.min.z, box.max.z]) {
+        const point = new THREE.Vector3(x, y, z).applyMatrix4(matrix)
+        points.push(point)
+        bounds.expandByPoint(point)
+      }
+    }
+  }
+}
+
+function collectSelectedComponentBounds(root: THREE.Group) {
+  root.updateWorldMatrix(true, true)
+  const allPoints: THREE.Vector3[] = []
+  const components: SelectedComponentBounds[] = []
+  const instanceMatrix = new THREE.Matrix4()
+  const instanceWorldMatrix = new THREE.Matrix4()
+
+  root.children.forEach((marker) => {
+    if (!marker.userData.selected) return
+    const sideRoot = marker.children.find((child) => child.userData.componentSurfaceRoot)
+    const modelRoot = sideRoot?.children.find((child) => child.userData.modelOrientationRoot)
+    if (!modelRoot) return
+
+    const points: THREE.Vector3[] = []
+    const bounds = new THREE.Box3()
+    modelRoot.traverse((child) => {
+      const mesh = child as THREE.Mesh
+      if (!mesh.isMesh || !mesh.geometry) return
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox()
+      const geometryBounds = mesh.geometry.boundingBox
+      if (!geometryBounds || geometryBounds.isEmpty()) return
+
+      const instancedMesh = mesh as THREE.InstancedMesh
+      if (instancedMesh.isInstancedMesh) {
+        for (let index = 0; index < instancedMesh.count; index += 1) {
+          instancedMesh.getMatrixAt(index, instanceMatrix)
+          instanceWorldMatrix.multiplyMatrices(instancedMesh.matrixWorld, instanceMatrix)
+          appendTransformedBoxCorners(geometryBounds, instanceWorldMatrix, points, bounds)
+        }
+      } else {
+        appendTransformedBoxCorners(geometryBounds, mesh.matrixWorld, points, bounds)
+      }
+    })
+    if (bounds.isEmpty()) return
+
+    allPoints.push(...points)
+    const center = bounds.getCenter(new THREE.Vector3())
+    const height = Math.max(bounds.max.z - bounds.min.z, 0.1)
+    const markerOffset = Math.max(height * 0.2, 0.35)
+    const anchorZ = marker.userData.surfaceSide === 'bottom'
+      ? bounds.min.z - markerOffset
+      : bounds.max.z + markerOffset
+    components.push({
+      marker,
+      designator: String(marker.userData.designator ?? ''),
+      bounds,
+      anchor: new THREE.Vector3(center.x, center.y, anchorZ),
+    })
+  })
+
+  return { allPoints, components }
+}
+
+function calculateSelectionCameraFocus(
+  root: THREE.Group,
+  camera: THREE.PerspectiveCamera,
+  controls: OrbitControls,
+  canvas: HTMLCanvasElement,
+): SelectionCameraFocus | null {
+  const { allPoints, components } = collectSelectedComponentBounds(root)
+  if (components.length === 0 || allPoints.length === 0) return null
+  const bounds = new THREE.Box3()
+  allPoints.forEach((point) => bounds.expandByPoint(point))
+  if (bounds.isEmpty()) return null
+
+  const center = bounds.getCenter(new THREE.Vector3())
+  const viewDirection = camera.position.clone().sub(controls.target)
+  if (viewDirection.lengthSq() < 0.0001) viewDirection.set(0.76, -1, 0.82)
+  viewDirection.normalize()
+  const canvasWidth = Math.max(canvas.clientWidth, 1)
+  const canvasHeight = Math.max(canvas.clientHeight, 1)
+  const fitCamera = camera.clone() as THREE.PerspectiveCamera
+  fitCamera.aspect = canvasWidth / canvasHeight
+  fitCamera.near = 0.001
+  fitCamera.far = 1_000_000
+  fitCamera.up.copy(camera.up)
+  fitCamera.updateProjectionMatrix()
+  const projected = new THREE.Vector3()
+  const cameraSpace = new THREE.Vector3()
+  const safeNdc = 1 - selectionViewportMargin * 2
+  const projectAtDistance = (distance: number): ProjectedSelectionRange => {
+    fitCamera.position.copy(center).addScaledVector(viewDirection, distance)
+    fitCamera.lookAt(center)
+    fitCamera.updateMatrixWorld(true)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    let allInFront = true
+    allPoints.forEach((point) => {
+      cameraSpace.copy(point).applyMatrix4(fitCamera.matrixWorldInverse)
+      if (cameraSpace.z >= -fitCamera.near) allInFront = false
+      projected.copy(point).project(fitCamera)
+      minX = Math.min(minX, projected.x)
+      maxX = Math.max(maxX, projected.x)
+      minY = Math.min(minY, projected.y)
+      maxY = Math.max(maxY, projected.y)
+    })
+    return {
+      fits: allInFront
+        && minX >= -safeNdc
+        && maxX <= safeNdc
+        && minY >= -safeNdc
+        && maxY <= safeNdc,
+      minX,
+      maxX,
+      minY,
+      maxY,
+    }
+  }
+
+  const minimumDistance = Math.max(controls.minDistance, minimumSelectionDistance)
+  let lowerDistance = minimumDistance
+  let upperDistance = minimumDistance
+  let upperRange = projectAtDistance(upperDistance)
+  while (!upperRange.fits && upperDistance < controls.maxDistance) {
+    lowerDistance = upperDistance
+    upperDistance = Math.min(upperDistance * 2, controls.maxDistance)
+    upperRange = projectAtDistance(upperDistance)
+  }
+  if (!upperRange.fits) return null
+
+  if (projectAtDistance(minimumDistance).fits) {
+    lowerDistance = minimumDistance
+    upperDistance = minimumDistance
+  } else {
+    for (let iteration = 0; iteration < 36; iteration += 1) {
+      const distance = (lowerDistance + upperDistance) / 2
+      if (projectAtDistance(distance).fits) upperDistance = distance
+      else lowerDistance = distance
+    }
+  }
+  const distance = upperDistance
+  const finalRange = projectAtDistance(distance)
+  const screenCoverage = Math.max(
+    (finalRange.maxX - finalRange.minX) / 2,
+    (finalRange.maxY - finalRange.minY) / 2,
+  )
+
+  return {
+    bounds,
+    target: center,
+    position: center.clone().addScaledVector(viewDirection, distance),
+    distance,
+    matchedCount: components.length,
+    screenCoverage,
+    components,
+  }
 }
 
 function createFallbackBoard(board: ParsedBoard, thickness: number): THREE.Group {
@@ -859,6 +1068,7 @@ export default function PcbViewer({
   alignment,
   bomItems,
   selectedDesignators,
+  selectionRevision,
   bomRowOrientations,
   onComponentSelect,
 }: PcbViewerProps) {
@@ -866,17 +1076,186 @@ export default function PcbViewer({
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
+  const outlinePassRef = useRef<OutlinePass | null>(null)
   const controlsRef = useRef<OrbitControls | null>(null)
   const boardRootRef = useRef<THREE.Group | null>(null)
   const componentRootRef = useRef<THREE.Group | null>(null)
   const gridRef = useRef<THREE.GridHelper | null>(null)
   const animationRef = useRef<number | null>(null)
+  const cameraFocusAnimationRef = useRef<number | null>(null)
+  const selectionOverlayRef = useRef<HTMLDivElement>(null)
+  const selectionOverlayItemsRef = useRef<SelectionOverlayItem[]>([])
   const pixelCheckRequestedRef = useRef(true)
   const visibilityRef = useRef(visibility)
   const bomRowOrientationsRef = useRef(bomRowOrientations)
   const onComponentSelectRef = useRef(onComponentSelect)
   const [renderError, setRenderError] = useState<string | null>(null)
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
   const [viewportRevision, setViewportRevision] = useState(0)
+
+  const cancelCameraFocusAnimation = () => {
+    if (cameraFocusAnimationRef.current === null) return
+    cancelAnimationFrame(cameraFocusAnimationRef.current)
+    cameraFocusAnimationRef.current = null
+  }
+
+  const clearSelectionEffects = () => {
+    if (outlinePassRef.current) outlinePassRef.current.selectedObjects = []
+    selectionOverlayItemsRef.current = []
+    selectionOverlayRef.current?.replaceChildren()
+  }
+
+  const showSelectionEffects = (components: SelectedComponentBounds[]) => {
+    clearSelectionEffects()
+    if (outlinePassRef.current) {
+      outlinePassRef.current.selectedObjects = components.map(({ marker }) => marker)
+    }
+    const overlay = selectionOverlayRef.current
+    if (!overlay) return
+
+    selectionOverlayItemsRef.current = components.map((component) => {
+      const element = document.createElement('div')
+      element.className = 'viewer-selection-marker'
+      element.dataset.designator = component.designator
+      const pin = document.createElement('span')
+      pin.className = 'viewer-selection-pin'
+      const label = document.createElement('span')
+      label.className = 'viewer-selection-label'
+      label.textContent = component.designator
+      element.append(pin, label)
+      overlay.appendChild(element)
+      return {
+        element,
+        label,
+        anchor: component.anchor.clone(),
+        designator: component.designator,
+      }
+    })
+  }
+
+  const updateSelectionOverlay = (
+    camera: THREE.PerspectiveCamera,
+    canvas: HTMLCanvasElement,
+  ) => {
+    const items = selectionOverlayItemsRef.current
+    if (items.length === 0) return
+    const width = Math.max(canvas.clientWidth, 1)
+    const height = Math.max(canvas.clientHeight, 1)
+    const projected = new THREE.Vector3()
+    const cameraSpace = new THREE.Vector3()
+    const occupied: Array<{ left: number; top: number; right: number; bottom: number }> = []
+    const visibleItems = items.map((item) => {
+      projected.copy(item.anchor).project(camera)
+      cameraSpace.copy(item.anchor).applyMatrix4(camera.matrixWorldInverse)
+      return {
+        item,
+        x: (projected.x * 0.5 + 0.5) * width,
+        y: (-projected.y * 0.5 + 0.5) * height,
+        visible: cameraSpace.z < -camera.near && projected.z >= -1 && projected.z <= 1,
+      }
+    }).sort((a, b) => a.y - b.y || a.x - b.x)
+
+    visibleItems.forEach(({ item, x, y, visible }) => {
+      item.element.hidden = !visible
+      if (!visible) return
+      const pointX = THREE.MathUtils.clamp(x, 8, width - 8)
+      const pointY = THREE.MathUtils.clamp(y, 8, height - 8)
+      item.element.style.transform = `translate3d(${pointX}px, ${pointY}px, 0)`
+      const labelWidth = Math.max(34, item.designator.length * 7 + 14)
+      const labelHeight = 20
+      const candidates = [
+        { x: 12, y: -28 },
+        { x: -labelWidth - 12, y: -28 },
+        { x: 12, y: 12 },
+        { x: -labelWidth - 12, y: 12 },
+        { x: -labelWidth / 2, y: -42 },
+        { x: -labelWidth / 2, y: 22 },
+      ]
+      let chosen: { x: number; y: number } | null = null
+      for (const candidate of candidates) {
+        const left = THREE.MathUtils.clamp(pointX + candidate.x, 4, Math.max(4, width - labelWidth - 4))
+        const top = THREE.MathUtils.clamp(pointY + candidate.y, 4, Math.max(4, height - labelHeight - 4))
+        const rectangle = {
+          left,
+          top,
+          right: left + labelWidth,
+          bottom: top + labelHeight,
+        }
+        const overlaps = occupied.some((other) => (
+          rectangle.left < other.right + 4
+          && rectangle.right + 4 > other.left
+          && rectangle.top < other.bottom + 4
+          && rectangle.bottom + 4 > other.top
+        ))
+        if (overlaps) continue
+        chosen = { x: left - pointX, y: top - pointY }
+        occupied.push(rectangle)
+        break
+      }
+      if (!chosen) {
+        const fallback = candidates[candidates.length - 1]
+        const left = THREE.MathUtils.clamp(pointX + fallback.x, 4, Math.max(4, width - labelWidth - 4))
+        const top = THREE.MathUtils.clamp(pointY + fallback.y, 4, Math.max(4, height - labelHeight - 4))
+        chosen = { x: left - pointX, y: top - pointY }
+        occupied.push({ left, top, right: left + labelWidth, bottom: top + labelHeight })
+      }
+      item.label.style.width = `${labelWidth}px`
+      item.label.style.transform = `translate3d(${chosen.x}px, ${chosen.y}px, 0)`
+    })
+  }
+
+  const animateCameraToSelection = (root: THREE.Group, focus: SelectionCameraFocus) => {
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+    if (!camera || !controls) return false
+
+    cancelCameraFocusAnimation()
+    const startPosition = camera.position.clone()
+    const startTarget = controls.target.clone()
+    const startedAt = performance.now()
+    const boundsRadius = focus.bounds.getSize(new THREE.Vector3()).length() / 2
+    camera.near = Math.max(Math.min(
+      startPosition.distanceTo(startTarget),
+      focus.distance,
+    ) / 1000, 0.02)
+    camera.far = Math.max(camera.far, focus.distance + boundsRadius * 4)
+    camera.updateProjectionMatrix()
+
+    root.userData.selectionFocusApplied = true
+    root.userData.selectionFocusCount = focus.matchedCount
+    root.userData.selectionFocusDistance = focus.distance
+    root.userData.selectionFocusMargin = selectionViewportMargin
+    root.userData.selectionFocusCoverage = focus.screenCoverage
+    root.userData.selectionFocusTarget = focus.target.toArray()
+      .map((value) => Number(value.toFixed(3)))
+      .join(',')
+    root.userData.selectionFocusAnimation = 'running'
+
+    const step = (now: number) => {
+      const progress = Math.min((now - startedAt) / selectionFocusDurationMs, 1)
+      const eased = 1 - (1 - progress) ** 3
+      controls.target.lerpVectors(startTarget, focus.target, eased)
+      camera.position.lerpVectors(startPosition, focus.position, eased)
+      controls.update()
+      pixelCheckRequestedRef.current = true
+
+      if (progress < 1) {
+        cameraFocusAnimationRef.current = requestAnimationFrame(step)
+        return
+      }
+
+      controls.target.copy(focus.target)
+      camera.position.copy(focus.position)
+      camera.near = Math.max(focus.distance / 1000, 0.02)
+      camera.updateProjectionMatrix()
+      controls.update()
+      root.userData.selectionFocusAnimation = 'complete'
+      cameraFocusAnimationRef.current = null
+    }
+
+    cameraFocusAnimationRef.current = requestAnimationFrame(step)
+    return true
+  }
 
   useEffect(() => {
     onComponentSelectRef.current = onComponentSelect
@@ -902,12 +1281,28 @@ export default function PcbViewer({
       renderer.domElement.tabIndex = 0
       host.appendChild(renderer.domElement)
 
+      const composer = new EffectComposer(renderer)
+      const renderPass = new RenderPass(scene, camera)
+      const outlinePass = new OutlinePass(new THREE.Vector2(1, 1), scene, camera)
+      outlinePass.visibleEdgeColor.set(0x7ffcff)
+      outlinePass.hiddenEdgeColor.set(0x00dfe8)
+      outlinePass.edgeStrength = 5
+      outlinePass.edgeGlow = 0.2
+      outlinePass.edgeThickness = 2.5
+      outlinePass.pulsePeriod = 0
+      const outputPass = new OutputPass()
+      composer.addPass(renderPass)
+      composer.addPass(outlinePass)
+      composer.addPass(outputPass)
+
       const controls = new OrbitControls(camera, renderer.domElement)
       controls.enableDamping = true
       controls.dampingFactor = 0.075
       controls.screenSpacePanning = true
       controls.minDistance = 10
       controls.maxDistance = 10000
+      const cancelFocusOnInteraction = () => cancelCameraFocusAnimation()
+      controls.addEventListener('start', cancelFocusOnInteraction)
       controls.addEventListener('end', () => {
         pixelCheckRequestedRef.current = true
       })
@@ -987,6 +1382,7 @@ export default function PcbViewer({
       sceneRef.current = scene
       cameraRef.current = camera
       rendererRef.current = renderer
+      outlinePassRef.current = outlinePass
       controlsRef.current = controls
       gridRef.current = grid
 
@@ -996,17 +1392,32 @@ export default function PcbViewer({
         camera.aspect = width / height
         camera.updateProjectionMatrix()
         renderer.setSize(width, height, false)
+        composer.setSize(width, height)
         setViewportRevision((revision) => revision + 1)
       }
       const observer = new ResizeObserver(resize)
       observer.observe(host)
       resize()
 
+      const cameraOffset = new THREE.Vector3()
       const animate = () => {
         controls.update()
         grid.position.z = camera.position.z >= 0 ? -4 : 4
         renderer.domElement.dataset.gridZ = String(grid.position.z)
         renderer.domElement.dataset.gridVisible = String(grid.visible)
+        renderer.domElement.dataset.cameraPosition = camera.position.toArray()
+          .map((value) => value.toFixed(3))
+          .join(',')
+        renderer.domElement.dataset.cameraTarget = controls.target.toArray()
+          .map((value) => value.toFixed(3))
+          .join(',')
+        renderer.domElement.dataset.cameraDirection = cameraOffset
+          .copy(camera.position)
+          .sub(controls.target)
+          .normalize()
+          .toArray()
+          .map((value) => value.toFixed(5))
+          .join(',')
         const boardRoot = boardRootRef.current
         if (boardRoot) {
           applyBoardVisibility(boardRoot, visibilityRef.current, camera.position.z)
@@ -1025,6 +1436,7 @@ export default function PcbViewer({
         if (componentRoot) {
           applyComponentVisibility(componentRoot, visibilityRef.current.components, camera.position.z)
           const placementMarkers = componentRoot.children.filter((child) => child.userData.placementMarker)
+          renderer.domElement.dataset.cameraDistance = camera.position.distanceTo(controls.target).toFixed(3)
           renderer.domElement.dataset.alignmentMode = String(componentRoot.userData.alignmentMode)
           renderer.domElement.dataset.placementCount = String(componentRoot.userData.placementCount)
           renderer.domElement.dataset.placementInside = String(componentRoot.userData.insideCount)
@@ -1038,6 +1450,28 @@ export default function PcbViewer({
           renderer.domElement.dataset.selectedPlacements = String(
             placementMarkers.filter((child) => child.userData.selected).length,
           )
+          renderer.domElement.dataset.focusedPlacements = String(
+            componentRoot.userData.selectionFocusCount ?? 0,
+          )
+          renderer.domElement.dataset.focusDistance = String(
+            componentRoot.userData.selectionFocusDistance ?? '',
+          )
+          renderer.domElement.dataset.focusMargin = String(
+            componentRoot.userData.selectionFocusMargin ?? '',
+          )
+          renderer.domElement.dataset.focusCoverage = String(
+            componentRoot.userData.selectionFocusCoverage ?? '',
+          )
+          renderer.domElement.dataset.focusTarget = String(
+            componentRoot.userData.selectionFocusTarget ?? '',
+          )
+          renderer.domElement.dataset.focusAnimation = String(
+            componentRoot.userData.selectionFocusAnimation ?? '',
+          )
+          renderer.domElement.dataset.selectionRequested = String(
+            componentRoot.userData.selectionRequestedCount ?? 0,
+          )
+          renderer.domElement.dataset.outlineSelected = String(outlinePass.selectedObjects.length)
           renderer.domElement.dataset.rotatedPlacements = String(
             placementMarkers.filter((child) => child.userData.appliedRotationZ !== 0).length,
           )
@@ -1052,10 +1486,19 @@ export default function PcbViewer({
           renderer.domElement.dataset.modelFailed = '0'
           renderer.domElement.dataset.visiblePlacements = '0'
           renderer.domElement.dataset.selectedPlacements = '0'
+          renderer.domElement.dataset.focusedPlacements = '0'
+          renderer.domElement.dataset.focusDistance = ''
+          renderer.domElement.dataset.focusMargin = ''
+          renderer.domElement.dataset.focusCoverage = ''
+          renderer.domElement.dataset.focusTarget = ''
+          renderer.domElement.dataset.focusAnimation = ''
+          renderer.domElement.dataset.selectionRequested = '0'
+          renderer.domElement.dataset.outlineSelected = '0'
           renderer.domElement.dataset.rotatedPlacements = '0'
           renderer.domElement.dataset.flippedPlacements = '0'
         }
-        renderer.render(scene, camera)
+        updateSelectionOverlay(camera, renderer.domElement)
+        composer.render()
         if (pixelCheckRequestedRef.current) {
           const context = renderer.getContext()
           const width = context.drawingBufferWidth
@@ -1093,10 +1536,17 @@ export default function PcbViewer({
         renderer.domElement.removeEventListener('pointercancel', clearPointerStart)
         renderer.domElement.removeEventListener('pointerleave', clearPointerStart)
         if (animationRef.current !== null) cancelAnimationFrame(animationRef.current)
+        cancelCameraFocusAnimation()
+        clearSelectionEffects()
+        controls.removeEventListener('start', cancelFocusOnInteraction)
         controls.dispose()
+        outlinePass.dispose()
+        outputPass.dispose()
+        composer.dispose()
         renderer.dispose()
         renderer.domElement.remove()
         scene.clear()
+        outlinePassRef.current = null
       }
     } catch (error) {
       setRenderError(error instanceof Error ? error.message : 'WebGL 初始化失败')
@@ -1129,6 +1579,9 @@ export default function PcbViewer({
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
+    cancelCameraFocusAnimation()
+    clearSelectionEffects()
+    setSelectionNotice(null)
     if (componentRootRef.current) {
       componentRootRef.current.userData.disposed = true
       scene.remove(componentRootRef.current)
@@ -1137,7 +1590,36 @@ export default function PcbViewer({
     }
     if (!board || !alignment) return
 
-    const object = createPlacementObject(
+    let object: THREE.Group | null = null
+    const focusSelectionWhenReady = () => {
+      if (!object || object.userData.selectionFocusResolved || selectedDesignators.length === 0) return
+      const selectedMarkers = object.children.filter((child) => child.userData.selected)
+      if (selectedMarkers.length === 0) {
+        object.userData.selectionFocusResolved = true
+        setSelectionNotice('未找到对应的 PCB 元件')
+        return
+      }
+      const selectionIsReady = selectedMarkers.every(
+        (marker) => marker.userData.modelLoaded || marker.userData.modelError,
+      )
+      if (!selectionIsReady) return
+
+      const camera = cameraRef.current
+      const controls = controlsRef.current
+      const canvas = rendererRef.current?.domElement
+      if (!camera || !controls || !canvas) return
+      const focus = calculateSelectionCameraFocus(object, camera, controls, canvas)
+      object.userData.selectionFocusResolved = true
+      if (!focus) {
+        setSelectionNotice('未找到对应的 PCB 元件')
+        return
+      }
+      setSelectionNotice(null)
+      showSelectionEffects(focus.components)
+      if (animateCameraToSelection(object, focus)) pixelCheckRequestedRef.current = true
+    }
+
+    object = createPlacementObject(
       board,
       thickness,
       alignment,
@@ -1146,14 +1628,17 @@ export default function PcbViewer({
       (bomItemId) => bomRowOrientationsRef.current.get(bomItemId),
       () => {
         pixelCheckRequestedRef.current = true
+        focusSelectionWhenReady()
       },
     )
+    object.userData.selectionRequestedCount = selectedDesignators.length
     applyBomRowOrientations(object, bomRowOrientationsRef.current)
     scene.add(object)
     componentRootRef.current = object
     if (cameraRef.current) applyComponentVisibility(object, visibility.components, cameraRef.current.position.z)
+    focusSelectionWhenReady()
     pixelCheckRequestedRef.current = true
-  }, [board, thickness, alignment, bomItems, selectedDesignators, visibility.components])
+  }, [board, thickness, alignment, bomItems, selectedDesignators, selectionRevision])
 
   useEffect(() => {
     bomRowOrientationsRef.current = bomRowOrientations
@@ -1179,6 +1664,7 @@ export default function PcbViewer({
     const camera = cameraRef.current
     const controls = controlsRef.current
     if (!camera || !controls || !board) return
+    cancelCameraFocusAnimation()
     const halfFov = THREE.MathUtils.degToRad(camera.fov / 2)
     const fitHeight = board.heightMm / (2 * Math.tan(halfFov))
     const fitWidth = board.widthMm / (2 * Math.tan(halfFov) * Math.max(camera.aspect, 0.1))
@@ -1204,10 +1690,16 @@ export default function PcbViewer({
 
   return (
     <div className="viewer-host" ref={hostRef}>
+      <div className="viewer-selection-overlay" ref={selectionOverlayRef} aria-hidden="true" />
       {renderError && (
         <div className="viewer-error" role="alert">
           <strong>无法生成 3D 视图</strong>
           <span>{renderError}</span>
+        </div>
+      )}
+      {selectionNotice && (
+        <div className="viewer-selection-notice" role="status">
+          {selectionNotice}
         </div>
       )}
     </div>

@@ -692,8 +692,9 @@ function App() {
     })
   }
 
-  const toggleSelectedBomItem = (itemId: string) => {
-    setSelectedBomId((current) => current === itemId ? null : itemId)
+  const selectBomItem = (itemId: string) => {
+    setSelectedBomId(itemId)
+    setBomSelectionRevision((revision) => revision + 1)
   }
 
   const selectBomItemByDesignator = (designator: string) => {
@@ -1361,20 +1362,16 @@ function App() {
                         className={[isConfirmed ? 'confirmed' : '', isSelected ? 'selected' : ''].filter(Boolean).join(' ')}
                         data-bom-id={item.id}
                         key={item.id}
-                        onClick={(event) => {
-                          const target = event.target
-                          if (target instanceof Element && target.closest('button, input, a, select, textarea')) return
-                          toggleSelectedBomItem(item.id)
-                        }}
+                        onClickCapture={() => selectBomItem(item.id)}
                         onKeyDown={(event) => {
                           if (event.target !== event.currentTarget) return
                           if (event.key === 'Enter') {
                             event.preventDefault()
-                            toggleSelectedBomItem(item.id)
+                            selectBomItem(item.id)
                           } else if (event.key === ' ') {
                             event.preventDefault()
                             if (isSelected) adjustSelectedBomRowOrientation('rotationZ')
-                            else setSelectedBomId(item.id)
+                            else selectBomItem(item.id)
                           }
                         }}
                         tabIndex={0}
@@ -1570,6 +1567,7 @@ function App() {
             alignment={placementAlignment}
             bomItems={pcbBomItems}
             selectedDesignators={selectedDesignators}
+            selectionRevision={bomSelectionRevision}
             bomRowOrientations={bomRowOrientations}
             onComponentSelect={selectBomItemByDesignator}
           />
