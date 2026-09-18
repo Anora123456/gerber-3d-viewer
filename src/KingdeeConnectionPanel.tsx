@@ -74,7 +74,7 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
     if (!hasRequiredFields) {
       setConnectionState('disconnected')
       onConnectionChange(false)
-      setStatus(hasSavedSecret ? '请填写完整的金蝶连接信息' : '请填写完整的连接信息和 AppSecret')
+      setStatus(hasSavedSecret ? '请填写完整的金蝶连接信息' : '请填写完整的连接信息和应用密钥')
       return
     }
 
@@ -122,7 +122,7 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
   const formIsValid = () => {
     if (!formRef.current?.reportValidity()) return false
     if (!hasSavedSecret && !config.app_secret) {
-      setStatus('首次连接时需要填写 AppSecret')
+      setStatus('首次连接时需要填写应用密钥')
       return false
     }
     return true
@@ -196,18 +196,18 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
         </div>
 
         <label className="kingdee-field kingdee-field-wide">
-          <span>AppID</span>
+          <span>应用ID</span>
           <input
             required
             value={config.appid}
             onChange={(event) => update('appid', event.target.value)}
-            placeholder="请输入第三方系统应用 ID"
+            placeholder="请输入第三方系统应用ID"
             spellCheck={false}
           />
         </label>
 
         <label className="kingdee-field kingdee-field-wide">
-          <span>AppSecret</span>
+          <span>应用密钥</span>
           <div className="kingdee-secret-control">
             <input
               type={secretVisible ? 'text' : 'password'}
