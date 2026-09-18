@@ -152,49 +152,34 @@ function applyComponentVisibility(root: THREE.Group, visible: boolean, cameraZ: 
   })
 }
 
-interface ComponentDimensions {
-  width: number
-  depth: number
-  height: number
-}
+const componentHighlightColor = new THREE.Color(0x00e0e0)
 
-const imperialPackageSizes: Record<string, [number, number]> = {
-  '0201': [0.6, 0.3],
-  '0402': [1, 0.5],
-  '0603': [1.6, 0.8],
-  '0805': [2, 1.25],
-  '1206': [3.2, 1.6],
-  '1210': [3.2, 2.5],
-  '1812': [4.5, 3.2],
-  '2512': [6.3, 3.2],
-}
+function highlightFootprintInstance(instance: THREE.Object3D) {
+  instance.traverse((child) => {
+    const mesh = child as THREE.Mesh
+    if (!mesh.isMesh) return
 
-function componentDimensions(item: BomItem | undefined): ComponentDimensions {
-  const source = `${item?.footprint ?? ''} ${item?.value ?? ''} ${item?.materialName ?? ''} ${item?.description ?? ''}`.toUpperCase()
-  let width = 1.8
-  let depth = 1.1
+    const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    const highlightedMaterials = sourceMaterials.map((sourceMaterial) => {
+      const material = sourceMaterial.clone() as THREE.Material & {
+        color?: THREE.Color
+        emissive?: THREE.Color
+        emissiveIntensity?: number
+      }
+      material.color?.lerp(componentHighlightColor, 0.68)
+      if (material.emissive) {
+        material.emissive.copy(componentHighlightColor)
+        material.emissiveIntensity = 0.12
+      }
+      material.depthTest = true
+      material.depthWrite = true
+      material.needsUpdate = true
+      return material
+    })
 
-  const metricSize = source.match(/(?:^|[^0-9])(\d+(?:\.\d+)?)\s*[X*×]\s*(\d+(?:\.\d+)?)(?:[^0-9]|$)/)
-  if (metricSize) {
-    width = Number(metricSize[1])
-    depth = Number(metricSize[2])
-  } else {
-    const packageCode = source.match(/(?:^|[^0-9])(0201|0402|0603|0805|1206|1210|1812|2512)(?:[^0-9]|$)/)?.[1]
-    if (packageCode) [width, depth] = imperialPackageSizes[packageCode]
-    else if (/SOT-?23/.test(source)) [width, depth] = [3, 1.5]
-    else if (/SOD-?123/.test(source)) [width, depth] = [3.7, 1.8]
-    else if (/SOD-?923/.test(source)) [width, depth] = [1, 0.6]
-    else if (/SO-?0?8|SOP-?8/.test(source)) [width, depth] = [5, 4]
-    else if (/LQFP64/.test(source)) [width, depth] = [10, 10]
-    else if (/QFN/.test(source)) [width, depth] = [4, 4]
-  }
-
-  width = THREE.MathUtils.clamp(width, 0.55, 16)
-  depth = THREE.MathUtils.clamp(depth, 0.4, 16)
-  const height = /LCD|BUZZ|USB|SWITCH|开关|电解/.test(source)
-    ? 2.4
-    : /CONNECTOR|HEADER|接插件|HDR|FPC/.test(source) ? 1.8 : 0.8
-  return { width, depth, height }
+    mesh.material = Array.isArray(mesh.material) ? highlightedMaterials : highlightedMaterials[0]
+    mesh.userData.instanceHighlightMaterial = true
+  })
 }
 
 function createPlacementObject(
@@ -234,7 +219,6 @@ function createPlacementObject(
     if (!item) return
     const model = matchFootprintModel(item)
     if (!model) return
-    const dimensions = componentDimensions(item)
     const isSelected = selected.has(designator)
     const side: SurfaceSide = placement.side === 'bottom' ? 'bottom' : 'top'
 
@@ -252,6 +236,7 @@ function createPlacementObject(
     marker.userData.bomItemId = item.id
     marker.userData.surfaceSide = side
     marker.userData.designator = designator
+    marker.userData.selected = isSelected
     marker.userData.placementMarker = true
     sideRoot.rotation.x = side === 'bottom' ? Math.PI : 0
     sideRoot.userData.componentSurfaceRoot = true
@@ -259,24 +244,6 @@ function createPlacementObject(
     sideRoot.add(modelRoot)
     marker.add(sideRoot)
     root.add(marker)
-
-    let selectionRing: THREE.Mesh | null = null
-
-    if (isSelected) {
-      const radius = Math.max(dimensions.width, dimensions.depth) * 0.72 + 0.45
-      selectionRing = new THREE.Mesh(
-        new THREE.RingGeometry(radius, radius + 0.22, 32),
-        new THREE.MeshBasicMaterial({
-          color: 0x6be0aa,
-          depthTest: true,
-          side: THREE.DoubleSide,
-        }),
-      )
-      selectionRing.position.z = dimensions.height + 0.2
-      selectionRing.userData.designator = designator
-      selectionRing.userData.selectionRing = true
-      sideRoot.add(selectionRing)
-    }
 
     applyPlacementOrientation(marker, getBomRowOrientation(item.id))
 
@@ -290,6 +257,7 @@ function createPlacementObject(
         instance.scale.setScalar(FOOTPRINT_MODEL_SCALE)
         instance.rotation.x = Math.PI / 2
       }
+      if (isSelected) highlightFootprintInstance(instance)
       instance.updateMatrixWorld(true)
 
       const bounds = new THREE.Box3().setFromObject(instance)
@@ -334,12 +302,8 @@ function applyPlacementOrientation(marker: THREE.Object3D, orientation?: Package
   sideRoot.remove(modelRoot)
   modelRoot.updateMatrixWorld(true)
   const bounds = new THREE.Box3().setFromObject(modelRoot)
-  const size = bounds.getSize(new THREE.Vector3())
   modelRoot.position.z = Number.isFinite(bounds.min.z) ? -bounds.min.z : 0
   sideRoot.add(modelRoot)
-
-  const selectionRing = sideRoot.children.find((child) => child.userData.selectionRing)
-  if (selectionRing && Number.isFinite(size.z)) selectionRing.position.z = size.z + 0.2
 }
 
 function applyBomRowOrientations(
@@ -747,7 +711,13 @@ function disposeObject(object: THREE.Object3D) {
   object.traverse((child) => {
     const mesh = child as THREE.Mesh
     if (!mesh.isMesh) return
-    if (mesh.userData.sharedFootprintResource) return
+    if (mesh.userData.sharedFootprintResource) {
+      if (mesh.userData.instanceHighlightMaterial) {
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+        materials.forEach((material) => material.dispose())
+      }
+      return
+    }
     mesh.geometry.dispose()
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
     materials.forEach((material) => {
@@ -1065,6 +1035,9 @@ export default function PcbViewer({
           renderer.domElement.dataset.visiblePlacements = String(
             placementMarkers.filter((child) => child.visible).length,
           )
+          renderer.domElement.dataset.selectedPlacements = String(
+            placementMarkers.filter((child) => child.userData.selected).length,
+          )
           renderer.domElement.dataset.rotatedPlacements = String(
             placementMarkers.filter((child) => child.userData.appliedRotationZ !== 0).length,
           )
@@ -1078,6 +1051,7 @@ export default function PcbViewer({
           renderer.domElement.dataset.modelLoaded = '0'
           renderer.domElement.dataset.modelFailed = '0'
           renderer.domElement.dataset.visiblePlacements = '0'
+          renderer.domElement.dataset.selectedPlacements = '0'
           renderer.domElement.dataset.rotatedPlacements = '0'
           renderer.domElement.dataset.flippedPlacements = '0'
         }
