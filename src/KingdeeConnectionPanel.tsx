@@ -146,37 +146,13 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
 
   return (
     <div className="kingdee-config-shell">
+      <section className="kingdee-login-panel" aria-label="金蝶 ERP 登录">
       <div className="kingdee-config-brand">
         <span><Database size={28} /></span>
         <div>
           <strong>金蝶 ERP</strong>
           <small>通过 K/3 Cloud WebAPI 同步电子物料</small>
         </div>
-      </div>
-
-      <div className="kingdee-config-gateway">
-        <div className={`kingdee-database-status ${connectionState}`} role="status" aria-live="polite">
-          {connectionState === 'checking' ? <LoaderCircle className="spin" size={22} /> : <Database size={22} />}
-          <div>
-            <strong>
-              {connectionState === 'checking'
-                ? '正在检测金蝶数据库'
-                : connectionState === 'connected'
-                  ? '检测到金蝶数据库'
-                  : '没有检测到金蝶数据库'}
-            </strong>
-            <span>{status}</span>
-          </div>
-        </div>
-        <button
-          className="kingdee-enter-button"
-          type="button"
-          onClick={() => void handleEnter()}
-          disabled={connectionState !== 'connected' || busy !== null}
-        >
-          {busy === 'enter' ? <LoaderCircle className="spin" size={18} /> : <Database size={18} />}
-          <span>进入 BOM 匹配系统</span>
-        </button>
       </div>
 
       <form
@@ -272,6 +248,32 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
           </fieldset>
         </div>
       </form>
+
+      <div className="kingdee-config-gateway">
+        <div className={`kingdee-database-status ${connectionState}`} role="status" aria-live="polite">
+          {connectionState === 'checking' ? <LoaderCircle className="spin" size={22} /> : <Database size={22} />}
+          <div>
+            <strong>
+              {connectionState === 'checking'
+                ? '正在检测金蝶数据库'
+                : connectionState === 'connected'
+                  ? '检测到金蝶数据库'
+                  : '没有检测到金蝶数据库'}
+            </strong>
+            <span>{status}</span>
+          </div>
+        </div>
+        <button
+          className="kingdee-enter-button"
+          type="button"
+          onClick={() => void handleEnter()}
+          disabled={connectionState !== 'connected' || busy !== null}
+        >
+          {busy === 'enter' ? <LoaderCircle className="spin" size={18} /> : <Database size={18} />}
+          <span>进入 BOM 匹配系统</span>
+        </button>
+      </div>
+      </section>
     </div>
   )
 }
