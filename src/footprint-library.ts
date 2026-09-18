@@ -7,6 +7,7 @@ export interface FootprintModel {
   sourcePath: string
   url: string
   stepUrl?: string
+  modelCorrectionQuaternion?: readonly [number, number, number, number]
 }
 
 export interface FootprintSource {
