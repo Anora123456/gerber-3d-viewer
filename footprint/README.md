@@ -84,6 +84,12 @@
 
 添加模型后需重启开发服务器或重新构建，使 Vite 重新生成模型索引。
 
+## 本地完整模型库
+
+完整 KiCad STEP 库保存在 `footprint/3dmodels`，由于体积较大，该目录不纳入 Git 管理。
+分类目录采用中文名称并保留 `.3dshapes` 后缀；原始英文目录名与中文目录名的对应关系记录在
+`footprint/3dmodels-folder-map.csv`。STEP 文件名保持不变，自动匹配仍以文件名为主。
+
 ## 从 KiCad 10 同步
 
 项目使用 `scripts/sync-kicad-footprints.ps1` 从本机 KiCad 模型库复制当前 BOM 所需的标准 STEP，并生成 `library-manifest.json`。脚本不会删除已有模型。
