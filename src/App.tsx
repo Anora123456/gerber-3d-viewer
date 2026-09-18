@@ -213,7 +213,7 @@ function App() {
   )
   const [placementData, setPlacementData] = useState<ParsedPlacementFile | null>(null)
   const [componentLibraryData, setComponentLibraryData] = useState<ParsedComponentLibraryFile | null>(null)
-  const [componentLibraryPageOpen, setComponentLibraryPageOpen] = useState(false)
+  const [componentLibraryPageOpen, setComponentLibraryPageOpen] = useState(true)
   const [componentLibraryPageView, setComponentLibraryPageView] = useState<'connection' | 'materials'>('connection')
   const [kingdeeSyncing, setKingdeeSyncing] = useState(false)
   const [kingdeeLastSync, setKingdeeLastSync] = useState<Date | null>(null)
