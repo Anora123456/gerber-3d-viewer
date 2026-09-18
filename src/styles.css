@@ -1422,15 +1422,17 @@ button {
 }
 
 .bom-table tbody tr.selected td {
-  background: #29281e;
+  color: #e8fff7;
+  background: #153a30;
+  box-shadow: inset 0 1px #287b64, inset 0 -1px #287b64;
 }
 
 .bom-table tbody tr.selected td:first-child {
-  box-shadow: inset 3px 0 var(--accent);
+  box-shadow: inset 3px 0 #35e3ae, inset 0 1px #287b64, inset 0 -1px #287b64;
 }
 
 .bom-table tbody tr.selected:hover td {
-  background: #302e21;
+  background: #19483b;
 }
 
 .bom-check-cell,
@@ -1905,6 +1907,146 @@ button {
 .viewer-host {
   position: absolute;
   inset: 0;
+}
+
+.viewer-selection-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.viewer-selection-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  contain: layout style;
+  will-change: transform;
+}
+
+.viewer-selection-ring {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  width: 10px;
+  height: 10px;
+  border: 1px solid #00e5ff;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 75%), 0 0 5px rgb(0 229 255 / 70%);
+  animation: selection-ring-arrive 400ms ease-out 1;
+}
+
+.viewer-selection-leader {
+  position: absolute;
+  top: -0.5px;
+  left: 0;
+  height: 1px;
+  background: rgb(0 229 255 / 88%);
+  box-shadow: 0 0 2px rgb(255 255 255 / 70%);
+  transform-origin: 0 50%;
+}
+
+.viewer-selection-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid rgb(124 252 255 / 90%);
+  border-radius: 3px;
+  color: #fff;
+  background: rgb(23 27 25 / 92%);
+  box-shadow: 0 2px 7px rgb(0 0 0 / 42%);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.viewer-selection-ring[hidden],
+.viewer-selection-leader[hidden],
+.viewer-selection-label[hidden] {
+  display: none;
+}
+
+@keyframes selection-ring-arrive {
+  0% {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.bom-row-orientation-controls {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 3;
+  display: flex;
+  gap: 6px;
+}
+
+.bom-row-orientation-controls button {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid rgb(99 120 107 / 70%);
+  border-radius: 5px;
+  color: #d4ddd7;
+  background: rgb(25 33 28 / 88%);
+  backdrop-filter: blur(8px);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.bom-row-orientation-controls button:hover:not(:disabled),
+.bom-row-orientation-controls button:focus-visible {
+  border-color: #76a98d;
+  color: #f0f4f1;
+  background: rgb(39 54 45 / 94%);
+}
+
+.bom-row-orientation-controls button:disabled {
+  color: #707c74;
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.bom-row-orientation-controls svg {
+  flex: 0 0 auto;
+  color: #75bd96;
+}
+
+.bom-row-orientation-controls button:disabled svg {
+  color: #657169;
+}
+
+.viewer-selection-notice {
+  position: absolute;
+  top: 56px;
+  left: 14px;
+  z-index: 3;
+  padding: 7px 10px;
+  border: 1px solid rgb(210 158 79 / 55%);
+  border-radius: 5px;
+  color: #f0cf91;
+  background: rgb(37 32 22 / 92%);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 22%);
+  font-size: 10px;
 }
 
 .viewer-error,

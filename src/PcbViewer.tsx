@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
+import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js'
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { renderSVG, renderThree } from 'web-gerber'
 import type { PathSegment, SvgElement } from 'web-gerber'
 import type { BomItem } from './assembly-data'
@@ -22,6 +26,11 @@ export interface LayerVisibility {
   grid: boolean
 }
 
+export interface PackageOrientation {
+  rotationZ: number
+  rotationX: number
+}
+
 interface PcbViewerProps {
   board: ParsedBoard | null
   thickness: number
@@ -32,6 +41,8 @@ interface PcbViewerProps {
   alignment: PlacementAlignment | null
   bomItems: BomItem[]
   selectedDesignators: string[]
+  selectionRevision: number
+  bomRowOrientations: ReadonlyMap<string, PackageOrientation>
   onComponentSelect: (designator: string) => void
 }
 
@@ -46,6 +57,64 @@ const RASTER_LAYER_THRESHOLD = 500
 const FOOTPRINT_MODEL_SCALE = 1000
 const footprintLoader = new GLTFLoader()
 const footprintTemplateCache = new Map<string, Promise<THREE.Group>>()
+const boardNormal = new THREE.Vector3(0, 0, 1)
+const boardTangent = new THREE.Vector3(1, 0, 0)
+
+function requiresFlatPostureValidation(model: FootprintModel) {
+  return /(?:^|_)(?:R|C|L)_?\d{4}|SOT|SOD/i.test(model.name)
+}
+
+function normalizeFootprintTemplate(
+  template: THREE.Group,
+  model: FootprintModel,
+  isStepModel: boolean,
+) {
+  const correction = new THREE.Quaternion()
+  if (!isStepModel) {
+    template.scale.setScalar(FOOTPRINT_MODEL_SCALE)
+    const gltfToBoard = new THREE.Quaternion().setFromAxisAngle(boardTangent, Math.PI / 2)
+    template.quaternion.premultiply(gltfToBoard)
+    correction.premultiply(gltfToBoard)
+  }
+
+  template.updateMatrixWorld(true)
+  let bounds = new THREE.Box3().setFromObject(template)
+  let size = bounds.getSize(new THREE.Vector3())
+  if (requiresFlatPostureValidation(model)) {
+    const smallestAxis = size.x <= size.y && size.x <= size.z
+      ? 'x'
+      : size.y <= size.z ? 'y' : 'z'
+    const postureCorrection = new THREE.Quaternion()
+    if (smallestAxis === 'x') {
+      postureCorrection.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2)
+    } else if (smallestAxis === 'y') {
+      postureCorrection.setFromAxisAngle(boardTangent, Math.PI / 2)
+    }
+    if (smallestAxis !== 'z') {
+      template.quaternion.premultiply(postureCorrection)
+      correction.premultiply(postureCorrection)
+      template.updateMatrixWorld(true)
+      bounds = new THREE.Box3().setFromObject(template)
+      size = bounds.getSize(new THREE.Vector3())
+    }
+  }
+
+  const center = bounds.getCenter(new THREE.Vector3())
+  template.position.x -= center.x
+  template.position.y -= center.y
+  template.position.z -= bounds.min.z
+  template.updateMatrixWorld(true)
+  bounds = new THREE.Box3().setFromObject(template)
+  size = bounds.getSize(new THREE.Vector3())
+  const flatPosture = !requiresFlatPostureValidation(model)
+    || size.z <= Math.min(size.x, size.y) * 1.05 + 0.001
+  const correctionTuple = correction.toArray() as [number, number, number, number]
+  model.modelCorrectionQuaternion = correctionTuple
+  template.userData.modelCorrectionQuaternion = correctionTuple
+  template.userData.flatPosture = flatPosture
+  template.userData.normalizedModelSize = size.toArray()
+  template.userData.modelNormalized = true
+}
 
 function loadFootprintTemplate(model: FootprintModel): Promise<THREE.Group> {
   const cacheKey = model.stepUrl ?? model.url
@@ -61,6 +130,7 @@ function loadFootprintTemplate(model: FootprintModel): Promise<THREE.Group> {
       })
     : footprintLoader.loadAsync(model.url).then((gltf) => gltf.scene)
   ).then((template) => {
+    normalizeFootprintTemplate(template, model, Boolean(model.stepUrl))
     template.name = `footprint-template:${model.name}`
     template.traverse((child) => {
       const mesh = child as THREE.Mesh
@@ -146,49 +216,42 @@ function applyComponentVisibility(root: THREE.Group, visible: boolean, cameraZ: 
   })
 }
 
-interface ComponentDimensions {
-  width: number
-  depth: number
-  height: number
+const componentHighlightColor = new THREE.Color(0x00e5ff)
+
+function highlightFootprintInstance(instance: THREE.Object3D) {
+  instance.traverse((child) => {
+    const mesh = child as THREE.Mesh
+    if (!mesh.isMesh) return
+
+    const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    const highlightedMaterials = sourceMaterials.map((sourceMaterial) => {
+      const material = sourceMaterial.clone() as THREE.Material & {
+        color?: THREE.Color
+        emissive?: THREE.Color
+        emissiveIntensity?: number
+      }
+      material.color?.lerp(componentHighlightColor, 0.25)
+      if (material.emissive) {
+        material.emissive.copy(componentHighlightColor)
+        material.emissiveIntensity = 0.2
+      }
+      material.depthTest = true
+      material.depthWrite = true
+      material.needsUpdate = true
+      return material
+    })
+
+    mesh.material = Array.isArray(mesh.material) ? highlightedMaterials : highlightedMaterials[0]
+    mesh.userData.instanceHighlightMaterial = true
+  })
 }
 
-const imperialPackageSizes: Record<string, [number, number]> = {
-  '0201': [0.6, 0.3],
-  '0402': [1, 0.5],
-  '0603': [1.6, 0.8],
-  '0805': [2, 1.25],
-  '1206': [3.2, 1.6],
-  '1210': [3.2, 2.5],
-  '1812': [4.5, 3.2],
-  '2512': [6.3, 3.2],
-}
-
-function componentDimensions(item: BomItem | undefined): ComponentDimensions {
-  const source = `${item?.footprint ?? ''} ${item?.value ?? ''} ${item?.materialName ?? ''} ${item?.description ?? ''}`.toUpperCase()
-  let width = 1.8
-  let depth = 1.1
-
-  const metricSize = source.match(/(?:^|[^0-9])(\d+(?:\.\d+)?)\s*[X*×]\s*(\d+(?:\.\d+)?)(?:[^0-9]|$)/)
-  if (metricSize) {
-    width = Number(metricSize[1])
-    depth = Number(metricSize[2])
-  } else {
-    const packageCode = source.match(/(?:^|[^0-9])(0201|0402|0603|0805|1206|1210|1812|2512)(?:[^0-9]|$)/)?.[1]
-    if (packageCode) [width, depth] = imperialPackageSizes[packageCode]
-    else if (/SOT-?23/.test(source)) [width, depth] = [3, 1.5]
-    else if (/SOD-?123/.test(source)) [width, depth] = [3.7, 1.8]
-    else if (/SOD-?923/.test(source)) [width, depth] = [1, 0.6]
-    else if (/SO-?0?8|SOP-?8/.test(source)) [width, depth] = [5, 4]
-    else if (/LQFP64/.test(source)) [width, depth] = [10, 10]
-    else if (/QFN/.test(source)) [width, depth] = [4, 4]
-  }
-
-  width = THREE.MathUtils.clamp(width, 0.55, 16)
-  depth = THREE.MathUtils.clamp(depth, 0.4, 16)
-  const height = /LCD|BUZZ|USB|SWITCH|开关|电解/.test(source)
-    ? 2.4
-    : /CONNECTOR|HEADER|接插件|HDR|FPC/.test(source) ? 1.8 : 0.8
-  return { width, depth, height }
+function findModelOrientationRoot(marker: THREE.Object3D): THREE.Group | undefined {
+  let result: THREE.Group | undefined
+  marker.traverse((child) => {
+    if (!result && child.userData.modelOrientationRoot) result = child as THREE.Group
+  })
+  return result
 }
 
 function createPlacementObject(
@@ -197,6 +260,7 @@ function createPlacementObject(
   alignment: PlacementAlignment,
   bomItems: BomItem[],
   selectedDesignators: string[],
+  getBomRowOrientation: (bomItemId: string) => PackageOrientation | undefined,
   onModelProgress: () => void,
 ): THREE.Group {
   const root = new THREE.Group()
@@ -209,6 +273,10 @@ function createPlacementObject(
   root.userData.modelMatchedCount = 0
   root.userData.modelLoadedCount = 0
   root.userData.modelFailedCount = 0
+  root.userData.postureValidCount = 0
+  root.userData.postureInvalidDesignators = [] as string[]
+  root.userData.contactValidCount = 0
+  root.userData.contactInvalidDesignators = [] as string[]
   root.userData.disposed = false
   root.userData.outsideDesignators = alignment.placements
     .filter((placement) => !placement.isInsideBoard)
@@ -217,52 +285,45 @@ function createPlacementObject(
 
   const itemByDesignator = new Map<string, BomItem>()
   bomItems.forEach((item) => item.designators.forEach((designator) => {
-    itemByDesignator.set(designator.toUpperCase(), item)
+    itemByDesignator.set(designator.trim().toUpperCase(), item)
   }))
-  const selected = new Set(selectedDesignators.map((designator) => designator.toUpperCase()))
+  const selected = new Set(selectedDesignators.map((designator) => designator.trim().toUpperCase()))
 
   alignment.placements.forEach((placement) => {
-    const designator = placement.designator.toUpperCase()
+    const designator = placement.designator.trim().toUpperCase()
     const item = itemByDesignator.get(designator)
     if (!item) return
     const model = matchFootprintModel(item)
     if (!model) return
-    const dimensions = componentDimensions(item)
     const isSelected = selected.has(designator)
     const side: SurfaceSide = placement.side === 'bottom' ? 'bottom' : 'top'
 
     const marker = new THREE.Group()
     const sideRoot = new THREE.Group()
+    const inPlaneRoot = new THREE.Group()
+    const modelRoot = new THREE.Group()
     const surfaceOffset = thickness / 2 + 0.09
     marker.position.set(
       placement.boardXmm,
       placement.boardYmm,
       side === 'bottom' ? -surfaceOffset : surfaceOffset,
     )
-    marker.rotation.z = THREE.MathUtils.degToRad(placement.rotation)
+    marker.userData.baseRotation = placement.rotation
+    marker.userData.bomItemId = item.id
     marker.userData.surfaceSide = side
     marker.userData.designator = designator
+    marker.userData.selected = isSelected
     marker.userData.placementMarker = true
-    sideRoot.rotation.x = side === 'bottom' ? Math.PI : 0
+    sideRoot.quaternion.setFromAxisAngle(boardTangent, side === 'bottom' ? Math.PI : 0)
+    sideRoot.userData.componentSurfaceRoot = true
+    inPlaneRoot.userData.componentRotationRoot = true
+    modelRoot.userData.modelOrientationRoot = true
+    inPlaneRoot.add(modelRoot)
+    sideRoot.add(inPlaneRoot)
     marker.add(sideRoot)
     root.add(marker)
 
-    let selectionRing: THREE.Mesh | null = null
-
-    if (isSelected) {
-      const radius = Math.max(dimensions.width, dimensions.depth) * 0.72 + 0.45
-      selectionRing = new THREE.Mesh(
-        new THREE.RingGeometry(radius, radius + 0.22, 32),
-        new THREE.MeshBasicMaterial({
-          color: 0x6be0aa,
-          depthTest: true,
-          side: THREE.DoubleSide,
-        }),
-      )
-      selectionRing.position.z = dimensions.height + 0.2
-      selectionRing.userData.designator = designator
-      sideRoot.add(selectionRing)
-    }
+    applyPlacementOrientation(marker, getBomRowOrientation(item.id))
 
     root.userData.modelMatchedCount += 1
     void loadFootprintTemplate(model).then((template) => {
@@ -270,10 +331,7 @@ function createPlacementObject(
 
       const instance = cloneFootprintTemplate(template)
       instance.name = `footprint:${model.name}:${designator}`
-      if (!template.userData.stepModel) {
-        instance.scale.setScalar(FOOTPRINT_MODEL_SCALE)
-        instance.rotation.x = Math.PI / 2
-      }
+      if (isSelected) highlightFootprintInstance(instance)
       instance.updateMatrixWorld(true)
 
       const bounds = new THREE.Box3().setFromObject(instance)
@@ -283,8 +341,24 @@ function createPlacementObject(
         throw new Error(`模型尺寸异常: ${largestDimension.toFixed(3)} mm`)
       }
 
-      sideRoot.add(instance)
-      if (selectionRing) selectionRing.position.z = size.z + 0.2
+      modelRoot.add(instance)
+      applyPlacementOrientation(marker, getBomRowOrientation(item.id))
+      const postureValid = Boolean(template.userData.flatPosture)
+      marker.userData.postureValid = postureValid
+      marker.userData.modelCorrectionQuaternion = template.userData.modelCorrectionQuaternion
+      if (postureValid) root.userData.postureValidCount += 1
+      else (root.userData.postureInvalidDesignators as string[]).push(designator)
+      root.updateWorldMatrix(true, true)
+      const placedBounds = new THREE.Box3().setFromObject(modelRoot)
+      const contactGap = side === 'bottom'
+        ? -thickness / 2 - placedBounds.max.z
+        : placedBounds.min.z - thickness / 2
+      const contactValid = contactGap >= -0.01 && contactGap <= 0.2
+      marker.userData.contactGap = contactGap
+      marker.userData.contactValid = contactValid
+      if (contactValid) root.userData.contactValidCount += 1
+      else (root.userData.contactInvalidDesignators as string[]).push(designator)
+      marker.userData.modelLoaded = true
       root.userData.modelLoadedCount += 1
       onModelProgress()
     }).catch((error: unknown) => {
@@ -296,6 +370,261 @@ function createPlacementObject(
   })
 
   return root
+}
+
+function applyPlacementOrientation(marker: THREE.Object3D, orientation?: PackageOrientation) {
+  const baseRotation = marker.userData.baseRotation
+  if (typeof baseRotation !== 'number') return
+  const rotationZ = orientation?.rotationZ ?? 0
+  const rotationX = orientation?.rotationX ?? 0
+  marker.userData.appliedRotationZ = rotationZ
+  marker.userData.appliedRotationX = rotationX
+  marker.userData.appliedPlacementRotation = (baseRotation + rotationZ) % 360
+
+  const sideRoot = marker.children.find((child) => child.userData.componentSurfaceRoot) as THREE.Group | undefined
+  const inPlaneRoot = sideRoot?.children.find((child) => child.userData.componentRotationRoot) as THREE.Group | undefined
+  const modelRoot = findModelOrientationRoot(marker)
+  if (!sideRoot || !inPlaneRoot || !modelRoot) return
+
+  inPlaneRoot.quaternion.setFromAxisAngle(boardNormal, THREE.MathUtils.degToRad(baseRotation + rotationZ))
+  modelRoot.quaternion.setFromAxisAngle(boardTangent, THREE.MathUtils.degToRad(rotationX))
+  modelRoot.position.z = 0
+  if (modelRoot.children.length === 0) return
+
+  inPlaneRoot.remove(modelRoot)
+  modelRoot.updateMatrixWorld(true)
+  const bounds = new THREE.Box3().setFromObject(modelRoot)
+  modelRoot.position.z = Number.isFinite(bounds.min.z) ? -bounds.min.z : 0
+  inPlaneRoot.add(modelRoot)
+}
+
+function applyBomRowOrientations(
+  root: THREE.Group,
+  bomRowOrientations: ReadonlyMap<string, PackageOrientation>,
+) {
+  root.children.forEach((child) => {
+    const bomItemId = child.userData.bomItemId
+    const baseRotation = child.userData.baseRotation
+    if (typeof bomItemId !== 'string' || typeof baseRotation !== 'number') return
+    applyPlacementOrientation(child, bomRowOrientations.get(bomItemId))
+  })
+}
+
+interface SelectionCameraFocus {
+  bounds: THREE.Box3
+  target: THREE.Vector3
+  position: THREE.Vector3
+  distance: number
+  matchedCount: number
+  screenCoverage: number
+  components: SelectedComponentBounds[]
+}
+
+interface SelectedComponentBounds {
+  marker: THREE.Object3D
+  designator: string
+  bounds: THREE.Box3
+}
+
+interface ProjectedSelectionRange {
+  fits: boolean
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
+interface SelectionOverlayItem {
+  element: HTMLDivElement
+  ring: HTMLSpanElement
+  leader: HTMLSpanElement
+  label: HTMLSpanElement
+  bounds: THREE.Box3
+  designator: string
+}
+
+const selectionViewportMargin = 0.08
+const selectionFocusDurationMs = 300
+const minimumSelectionDistance = 12
+const singleSelectionMaximumCoverage = 0.18
+
+function appendTransformedBoxCorners(
+  box: THREE.Box3,
+  matrix: THREE.Matrix4,
+  points: THREE.Vector3[],
+  bounds: THREE.Box3,
+) {
+  for (const x of [box.min.x, box.max.x]) {
+    for (const y of [box.min.y, box.max.y]) {
+      for (const z of [box.min.z, box.max.z]) {
+        const point = new THREE.Vector3(x, y, z).applyMatrix4(matrix)
+        points.push(point)
+        bounds.expandByPoint(point)
+      }
+    }
+  }
+}
+
+function collectSelectedComponentBounds(root: THREE.Group) {
+  root.updateWorldMatrix(true, true)
+  const allPoints: THREE.Vector3[] = []
+  const components: SelectedComponentBounds[] = []
+  const instanceMatrix = new THREE.Matrix4()
+  const instanceWorldMatrix = new THREE.Matrix4()
+
+  root.children.forEach((marker) => {
+    if (!marker.userData.selected) return
+    const modelRoot = findModelOrientationRoot(marker)
+    if (!modelRoot) return
+
+    const points: THREE.Vector3[] = []
+    const bounds = new THREE.Box3()
+    modelRoot.traverse((child) => {
+      const mesh = child as THREE.Mesh
+      if (!mesh.isMesh || !mesh.geometry) return
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox()
+      const geometryBounds = mesh.geometry.boundingBox
+      if (!geometryBounds || geometryBounds.isEmpty()) return
+
+      const instancedMesh = mesh as THREE.InstancedMesh
+      if (instancedMesh.isInstancedMesh) {
+        for (let index = 0; index < instancedMesh.count; index += 1) {
+          instancedMesh.getMatrixAt(index, instanceMatrix)
+          instanceWorldMatrix.multiplyMatrices(instancedMesh.matrixWorld, instanceMatrix)
+          appendTransformedBoxCorners(geometryBounds, instanceWorldMatrix, points, bounds)
+        }
+      } else {
+        appendTransformedBoxCorners(geometryBounds, mesh.matrixWorld, points, bounds)
+      }
+    })
+    if (bounds.isEmpty()) return
+
+    allPoints.push(...points)
+    components.push({
+      marker,
+      designator: String(marker.userData.designator ?? ''),
+      bounds,
+    })
+  })
+
+  return { allPoints, components }
+}
+
+function calculateSelectionCameraFocus(
+  root: THREE.Group,
+  camera: THREE.PerspectiveCamera,
+  controls: OrbitControls,
+  canvas: HTMLCanvasElement,
+): SelectionCameraFocus | null {
+  const { allPoints, components } = collectSelectedComponentBounds(root)
+  if (components.length === 0 || allPoints.length === 0) return null
+  const bounds = new THREE.Box3()
+  allPoints.forEach((point) => bounds.expandByPoint(point))
+  if (bounds.isEmpty()) return null
+
+  const center = bounds.getCenter(new THREE.Vector3())
+  const viewDirection = camera.position.clone().sub(controls.target)
+  if (viewDirection.lengthSq() < 0.0001) viewDirection.set(0.76, -1, 0.82)
+  viewDirection.normalize()
+  const canvasWidth = Math.max(canvas.clientWidth, 1)
+  const canvasHeight = Math.max(canvas.clientHeight, 1)
+  const fitCamera = camera.clone() as THREE.PerspectiveCamera
+  fitCamera.aspect = canvasWidth / canvasHeight
+  fitCamera.near = 0.001
+  fitCamera.far = 1_000_000
+  fitCamera.up.copy(camera.up)
+  fitCamera.updateProjectionMatrix()
+  const projected = new THREE.Vector3()
+  const cameraSpace = new THREE.Vector3()
+  const safeNdc = 1 - selectionViewportMargin * 2
+  const projectAtDistance = (distance: number): ProjectedSelectionRange => {
+    fitCamera.position.copy(center).addScaledVector(viewDirection, distance)
+    fitCamera.lookAt(center)
+    fitCamera.updateMatrixWorld(true)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    let allInFront = true
+    allPoints.forEach((point) => {
+      cameraSpace.copy(point).applyMatrix4(fitCamera.matrixWorldInverse)
+      if (cameraSpace.z >= -fitCamera.near) allInFront = false
+      projected.copy(point).project(fitCamera)
+      minX = Math.min(minX, projected.x)
+      maxX = Math.max(maxX, projected.x)
+      minY = Math.min(minY, projected.y)
+      maxY = Math.max(maxY, projected.y)
+    })
+    return {
+      fits: allInFront
+        && minX >= -safeNdc
+        && maxX <= safeNdc
+        && minY >= -safeNdc
+        && maxY <= safeNdc,
+      minX,
+      maxX,
+      minY,
+      maxY,
+    }
+  }
+
+  const minimumDistance = Math.max(controls.minDistance, minimumSelectionDistance)
+  let lowerDistance = minimumDistance
+  let upperDistance = minimumDistance
+  let upperRange = projectAtDistance(upperDistance)
+  while (!upperRange.fits && upperDistance < controls.maxDistance) {
+    lowerDistance = upperDistance
+    upperDistance = Math.min(upperDistance * 2, controls.maxDistance)
+    upperRange = projectAtDistance(upperDistance)
+  }
+  if (!upperRange.fits) return null
+
+  if (projectAtDistance(minimumDistance).fits) {
+    lowerDistance = minimumDistance
+    upperDistance = minimumDistance
+  } else {
+    for (let iteration = 0; iteration < 36; iteration += 1) {
+      const distance = (lowerDistance + upperDistance) / 2
+      if (projectAtDistance(distance).fits) upperDistance = distance
+      else lowerDistance = distance
+    }
+  }
+  const coverageOf = (range: ProjectedSelectionRange) => Math.max(
+    (range.maxX - range.minX) / 2,
+    (range.maxY - range.minY) / 2,
+  )
+  let distance = upperDistance
+  let finalRange = projectAtDistance(distance)
+  let screenCoverage = coverageOf(finalRange)
+  if (components.length === 1 && screenCoverage > singleSelectionMaximumCoverage) {
+    let nearDistance = distance
+    let farDistance = distance
+    let farRange = finalRange
+    while (coverageOf(farRange) > singleSelectionMaximumCoverage && farDistance < controls.maxDistance) {
+      nearDistance = farDistance
+      farDistance = Math.min(farDistance * 2, controls.maxDistance)
+      farRange = projectAtDistance(farDistance)
+    }
+    for (let iteration = 0; iteration < 36; iteration += 1) {
+      const candidateDistance = (nearDistance + farDistance) / 2
+      const candidateRange = projectAtDistance(candidateDistance)
+      if (coverageOf(candidateRange) <= singleSelectionMaximumCoverage) farDistance = candidateDistance
+      else nearDistance = candidateDistance
+    }
+    distance = farDistance
+    finalRange = projectAtDistance(distance)
+    screenCoverage = coverageOf(finalRange)
+  }
+
+  return {
+    bounds,
+    target: center,
+    position: center.clone().addScaledVector(viewDirection, distance),
+    distance,
+    matchedCount: components.length,
+    screenCoverage,
+    components,
+  }
 }
 
 function createFallbackBoard(board: ParsedBoard, thickness: number): THREE.Group {
@@ -364,11 +693,12 @@ function serializeSvgNode(node: SvgNodeLike): string {
   return `<${node.tagName}${attributes}>${children}</${node.tagName}>`
 }
 
-function textureDimensions(board: ParsedBoard): [number, number] {
-  const pixelsPerMm = 10
-  const targetWidth = Math.max(board.widthMm * pixelsPerMm, 256)
-  const targetHeight = Math.max(board.heightMm * pixelsPerMm, 256)
-  const scale = Math.min(1, 2048 / Math.max(targetWidth, targetHeight))
+function textureDimensions(board: ParsedBoard, maxTextureSize: number): [number, number] {
+  const pixelsPerMm = 32
+  const targetWidth = Math.max(board.widthMm * pixelsPerMm, 512)
+  const targetHeight = Math.max(board.heightMm * pixelsPerMm, 512)
+  const textureLimit = Math.min(maxTextureSize, 4096)
+  const scale = Math.min(1, textureLimit / Math.max(targetWidth, targetHeight))
   return [Math.round(targetWidth * scale), Math.round(targetHeight * scale)]
 }
 
@@ -376,6 +706,8 @@ function createLayerTexture(
   board: ParsedBoard,
   layer: ParsedLayer,
   color: THREE.ColorRepresentation,
+  maxAnisotropy: number,
+  maxTextureSize: number,
   onLoad: () => void,
 ): THREE.Texture {
   const [x1, y1, x2, y2] = board.boundsMm
@@ -386,7 +718,7 @@ function createLayerTexture(
     (y2 - y1) / layer.unitScale,
   ]
   const tree = renderSVG(layer.image, viewBox) as SvgElement & { properties: Record<string, unknown> }
-  const [width, height] = textureDimensions(board)
+  const [width, height] = textureDimensions(board, maxTextureSize)
   tree.properties = {
     ...tree.properties,
     color: `#${new THREE.Color(color).getHexString()}`,
@@ -401,7 +733,10 @@ function createLayerTexture(
   image.decoding = 'async'
   const texture = new THREE.Texture(image)
   texture.colorSpace = THREE.SRGBColorSpace
-  texture.anisotropy = 4
+  texture.anisotropy = maxAnisotropy
+  texture.generateMipmaps = true
+  texture.minFilter = THREE.LinearMipmapLinearFilter
+  texture.magFilter = THREE.LinearFilter
   image.addEventListener('load', () => {
     texture.needsUpdate = true
     URL.revokeObjectURL(objectUrl)
@@ -421,6 +756,8 @@ function createRasterizedLayers(
   color: THREE.ColorRepresentation,
   z: number,
   depth: number,
+  maxAnisotropy: number,
+  maxTextureSize: number,
   onTextureLoad: () => void,
 ): THREE.Group {
   const group = new THREE.Group()
@@ -429,7 +766,14 @@ function createRasterizedLayers(
   const zPositions = z === 0 ? [depth / 2, -depth / 2] : [z]
 
   layers.forEach((layer, layerIndex) => {
-    const texture = createLayerTexture(board, layer, color, onTextureLoad)
+    const texture = createLayerTexture(
+      board,
+      layer,
+      color,
+      maxAnisotropy,
+      maxTextureSize,
+      onTextureLoad,
+    )
     const material = new THREE.MeshBasicMaterial({
       map: texture,
       alphaTest: 0.02,
@@ -691,7 +1035,13 @@ function disposeObject(object: THREE.Object3D) {
   object.traverse((child) => {
     const mesh = child as THREE.Mesh
     if (!mesh.isMesh) return
-    if (mesh.userData.sharedFootprintResource) return
+    if (mesh.userData.sharedFootprintResource) {
+      if (mesh.userData.instanceHighlightMaterial) {
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+        materials.forEach((material) => material.dispose())
+      }
+      return
+    }
     mesh.geometry.dispose()
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
     materials.forEach((material) => {
@@ -706,6 +1056,8 @@ function buildBoardObject(
   board: ParsedBoard,
   thickness: number,
   maskColor: string,
+  maxAnisotropy: number,
+  maxTextureSize: number,
   onTextureLoad: () => void,
 ): THREE.Group {
   const root = new THREE.Group()
@@ -772,9 +1124,19 @@ function buildBoardObject(
     underMask = false,
   ) => {
     if (layers.length === 0) return
-    const rasterize = layers.reduce((sum, layer) => sum + layer.image.children.length, 0) > RASTER_LAYER_THRESHOLD
+    const rasterize = kind === 'drill'
+      && layers.reduce((sum, layer) => sum + layer.image.children.length, 0) > RASTER_LAYER_THRESHOLD
     const object = rasterize
-      ? createRasterizedLayers(board, layers, color, z, depth, onTextureLoad)
+      ? createRasterizedLayers(
+          board,
+          layers,
+          color,
+          z,
+          depth,
+          maxAnisotropy,
+          maxTextureSize,
+          onTextureLoad,
+        )
       : mergeRenderedLayers(layers, color)
     if (!rasterize) {
       object.scale.z = depth
@@ -833,22 +1195,238 @@ export default function PcbViewer({
   alignment,
   bomItems,
   selectedDesignators,
+  selectionRevision,
+  bomRowOrientations,
   onComponentSelect,
 }: PcbViewerProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
+  const outlinePassRef = useRef<OutlinePass | null>(null)
+  const innerOutlinePassRef = useRef<OutlinePass | null>(null)
   const controlsRef = useRef<OrbitControls | null>(null)
   const boardRootRef = useRef<THREE.Group | null>(null)
   const componentRootRef = useRef<THREE.Group | null>(null)
   const gridRef = useRef<THREE.GridHelper | null>(null)
   const animationRef = useRef<number | null>(null)
+  const cameraFocusAnimationRef = useRef<number | null>(null)
+  const selectionOverlayRef = useRef<HTMLDivElement>(null)
+  const selectionOverlayItemsRef = useRef<SelectionOverlayItem[]>([])
+  const hoveredDesignatorRef = useRef<string | null>(null)
   const pixelCheckRequestedRef = useRef(true)
   const visibilityRef = useRef(visibility)
+  const bomRowOrientationsRef = useRef(bomRowOrientations)
   const onComponentSelectRef = useRef(onComponentSelect)
   const [renderError, setRenderError] = useState<string | null>(null)
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
   const [viewportRevision, setViewportRevision] = useState(0)
+
+  const cancelCameraFocusAnimation = () => {
+    if (cameraFocusAnimationRef.current === null) return
+    cancelAnimationFrame(cameraFocusAnimationRef.current)
+    cameraFocusAnimationRef.current = null
+  }
+
+  const clearSelectionEffects = () => {
+    if (outlinePassRef.current) outlinePassRef.current.selectedObjects = []
+    if (innerOutlinePassRef.current) innerOutlinePassRef.current.selectedObjects = []
+    selectionOverlayItemsRef.current = []
+    selectionOverlayRef.current?.replaceChildren()
+  }
+
+  const showSelectionEffects = (components: SelectedComponentBounds[]) => {
+    clearSelectionEffects()
+    if (outlinePassRef.current) {
+      outlinePassRef.current.selectedObjects = components.map(({ marker }) => marker)
+    }
+    if (innerOutlinePassRef.current) {
+      innerOutlinePassRef.current.selectedObjects = components.map(({ marker }) => marker)
+    }
+    const overlay = selectionOverlayRef.current
+    if (!overlay) return
+
+    selectionOverlayItemsRef.current = components.map((component) => {
+      const element = document.createElement('div')
+      element.className = 'viewer-selection-marker'
+      element.dataset.designator = component.designator
+      const leader = document.createElement('span')
+      leader.className = 'viewer-selection-leader'
+      const ring = document.createElement('span')
+      ring.className = 'viewer-selection-ring'
+      const label = document.createElement('span')
+      label.className = 'viewer-selection-label'
+      label.textContent = component.designator
+      label.hidden = true
+      element.append(leader, ring, label)
+      overlay.appendChild(element)
+      return {
+        element,
+        ring,
+        leader,
+        label,
+        bounds: component.bounds.clone(),
+        designator: component.designator,
+      }
+    })
+  }
+
+  const updateSelectionOverlay = (
+    camera: THREE.PerspectiveCamera,
+    canvas: HTMLCanvasElement,
+  ) => {
+    const items = selectionOverlayItemsRef.current
+    if (items.length === 0) return
+    const width = Math.max(canvas.clientWidth, 1)
+    const height = Math.max(canvas.clientHeight, 1)
+    const projected = new THREE.Vector3()
+    const cameraSpace = new THREE.Vector3()
+    const visibleItems = items.map((item) => {
+      let minX = Infinity
+      let maxX = -Infinity
+      let minY = Infinity
+      let maxY = -Infinity
+      let allInFront = true
+      for (const x of [item.bounds.min.x, item.bounds.max.x]) {
+        for (const y of [item.bounds.min.y, item.bounds.max.y]) {
+          for (const z of [item.bounds.min.z, item.bounds.max.z]) {
+            const corner = new THREE.Vector3(x, y, z)
+            cameraSpace.copy(corner).applyMatrix4(camera.matrixWorldInverse)
+            if (cameraSpace.z >= -camera.near) allInFront = false
+            projected.copy(corner).project(camera)
+            const screenX = (projected.x * 0.5 + 0.5) * width
+            const screenY = (-projected.y * 0.5 + 0.5) * height
+            minX = Math.min(minX, screenX)
+            maxX = Math.max(maxX, screenX)
+            minY = Math.min(minY, screenY)
+            maxY = Math.max(maxY, screenY)
+          }
+        }
+      }
+      return {
+        item,
+        minX,
+        maxX,
+        minY,
+        maxY,
+        centerX: (minX + maxX) / 2,
+        centerY: (minY + maxY) / 2,
+        size: Math.max(maxX - minX, maxY - minY),
+        visible: allInFront && maxX >= 0 && minX <= width && maxY >= 0 && minY <= height,
+      }
+    })
+    const onscreen = visibleItems.filter((item) => item.visible)
+    const spreadX = onscreen.length > 0
+      ? Math.max(...onscreen.map((item) => item.centerX)) - Math.min(...onscreen.map((item) => item.centerX))
+      : 0
+    const spreadY = onscreen.length > 0
+      ? Math.max(...onscreen.map((item) => item.centerY)) - Math.min(...onscreen.map((item) => item.centerY))
+      : 0
+    const dispersedSelection = items.length > 1 && Math.max(spreadX, spreadY) >= 120
+
+    visibleItems.forEach(({ item, minX, maxX, minY, maxY, centerX, centerY, size, visible }) => {
+      const showRing = visible && size < 8 && dispersedSelection
+      const showHoverLabel = visible
+        && size <= 18
+        && hoveredDesignatorRef.current === item.designator
+      item.element.hidden = !showRing && !showHoverLabel
+      item.ring.hidden = !showRing
+      item.leader.hidden = !showRing
+      item.label.hidden = !showHoverLabel
+      item.element.dataset.visibilityTier = size > 18 ? 'detail' : size >= 8 ? 'outline' : 'locator'
+      item.element.dataset.projectedSize = size.toFixed(2)
+      if (item.element.hidden) return
+
+      let markerX = maxX + 12
+      let markerY = minY - 10
+      if (markerX > width - 9) markerX = minX - 12
+      if (markerY < 9) markerY = maxY + 10
+      markerX = THREE.MathUtils.clamp(markerX, 9, width - 9)
+      markerY = THREE.MathUtils.clamp(markerY, 9, height - 9)
+      item.element.style.transform = `translate3d(${markerX}px, ${markerY}px, 0)`
+
+      if (showRing) {
+        const targetX = THREE.MathUtils.clamp(markerX, minX, maxX)
+        const targetY = THREE.MathUtils.clamp(markerY, minY, maxY)
+        const deltaX = targetX - markerX
+        const deltaY = targetY - markerY
+        const lineLength = Math.max(Math.hypot(deltaX, deltaY) - 5, 0)
+        item.leader.style.width = `${lineLength}px`
+        item.leader.style.transform = `rotate(${Math.atan2(deltaY, deltaX)}rad)`
+      }
+
+      if (!showHoverLabel) return
+      const labelWidth = Math.max(34, item.designator.length * 7 + 14)
+      const labelHeight = 20
+      const candidates = [
+        { x: 9, y: -25 },
+        { x: -labelWidth - 12, y: -28 },
+        { x: 9, y: 9 },
+        { x: -labelWidth - 12, y: 12 },
+      ]
+      const candidate = candidates.find(({ x, y }) => (
+        markerX + x >= 4
+        && markerX + x + labelWidth <= width - 4
+        && markerY + y >= 4
+        && markerY + y + labelHeight <= height - 4
+      )) ?? candidates[0]
+      item.label.style.width = `${labelWidth}px`
+      item.label.style.transform = `translate3d(${candidate.x}px, ${candidate.y}px, 0)`
+    })
+  }
+
+  const animateCameraToSelection = (root: THREE.Group, focus: SelectionCameraFocus) => {
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+    if (!camera || !controls) return false
+
+    cancelCameraFocusAnimation()
+    const startPosition = camera.position.clone()
+    const startTarget = controls.target.clone()
+    const startedAt = performance.now()
+    const boundsRadius = focus.bounds.getSize(new THREE.Vector3()).length() / 2
+    camera.near = Math.max(Math.min(
+      startPosition.distanceTo(startTarget),
+      focus.distance,
+    ) / 1000, 0.02)
+    camera.far = Math.max(camera.far, focus.distance + boundsRadius * 4)
+    camera.updateProjectionMatrix()
+
+    root.userData.selectionFocusApplied = true
+    root.userData.selectionFocusCount = focus.matchedCount
+    root.userData.selectionFocusDistance = focus.distance
+    root.userData.selectionFocusMargin = selectionViewportMargin
+    root.userData.selectionFocusCoverage = focus.screenCoverage
+    root.userData.selectionFocusTarget = focus.target.toArray()
+      .map((value) => Number(value.toFixed(3)))
+      .join(',')
+    root.userData.selectionFocusAnimation = 'running'
+
+    const step = (now: number) => {
+      const progress = Math.min((now - startedAt) / selectionFocusDurationMs, 1)
+      const eased = 1 - (1 - progress) ** 3
+      controls.target.lerpVectors(startTarget, focus.target, eased)
+      camera.position.lerpVectors(startPosition, focus.position, eased)
+      controls.update()
+
+      if (progress < 1) {
+        cameraFocusAnimationRef.current = requestAnimationFrame(step)
+        return
+      }
+
+      controls.target.copy(focus.target)
+      camera.position.copy(focus.position)
+      camera.near = Math.max(focus.distance / 1000, 0.02)
+      camera.updateProjectionMatrix()
+      controls.update()
+      root.userData.selectionFocusAnimation = 'complete'
+      pixelCheckRequestedRef.current = true
+      cameraFocusAnimationRef.current = null
+    }
+
+    cameraFocusAnimationRef.current = requestAnimationFrame(step)
+    return true
+  }
 
   useEffect(() => {
     onComponentSelectRef.current = onComponentSelect
@@ -871,7 +1449,30 @@ export default function PcbViewer({
       renderer.toneMappingExposure = 1.05
       renderer.shadowMap.enabled = true
       renderer.shadowMap.type = THREE.PCFSoftShadowMap
+      renderer.domElement.tabIndex = 0
       host.appendChild(renderer.domElement)
+
+      const composer = new EffectComposer(renderer)
+      const renderPass = new RenderPass(scene, camera)
+      const outlinePass = new OutlinePass(new THREE.Vector2(1, 1), scene, camera)
+      outlinePass.visibleEdgeColor.set(0x00e5ff)
+      outlinePass.hiddenEdgeColor.set(0x00e5ff)
+      outlinePass.edgeStrength = 4
+      outlinePass.edgeGlow = 0.12
+      outlinePass.edgeThickness = 2
+      outlinePass.pulsePeriod = 0
+      const innerOutlinePass = new OutlinePass(new THREE.Vector2(1, 1), scene, camera)
+      innerOutlinePass.visibleEdgeColor.set(0xffffff)
+      innerOutlinePass.hiddenEdgeColor.set(0xffffff)
+      innerOutlinePass.edgeStrength = 2.6
+      innerOutlinePass.edgeGlow = 0
+      innerOutlinePass.edgeThickness = 0.75
+      innerOutlinePass.pulsePeriod = 0
+      const outputPass = new OutputPass()
+      composer.addPass(renderPass)
+      composer.addPass(outlinePass)
+      composer.addPass(innerOutlinePass)
+      composer.addPass(outputPass)
 
       const controls = new OrbitControls(camera, renderer.domElement)
       controls.enableDamping = true
@@ -879,6 +1480,8 @@ export default function PcbViewer({
       controls.screenSpacePanning = true
       controls.minDistance = 10
       controls.maxDistance = 10000
+      const cancelFocusOnInteraction = () => cancelCameraFocusAnimation()
+      controls.addEventListener('start', cancelFocusOnInteraction)
       controls.addEventListener('end', () => {
         pixelCheckRequestedRef.current = true
       })
@@ -898,18 +1501,14 @@ export default function PcbViewer({
       }
       const handlePointerDown = (event: PointerEvent) => {
         if (event.button !== 0) return
+        renderer.domElement.focus({ preventScroll: true })
         pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY }
       }
-      const handlePointerUp = (event: PointerEvent) => {
-        const start = pointerStart
-        pointerStart = null
-        if (!start || start.id !== event.pointerId) return
-        if ((event.clientX - start.x) ** 2 + (event.clientY - start.y) ** 2 > 36) return
-
+      const designatorAtPointer = (event: PointerEvent) => {
         const componentRoot = componentRootRef.current
-        if (!componentRoot || !componentRoot.visible || !visibilityRef.current.components) return
+        if (!componentRoot || !componentRoot.visible || !visibilityRef.current.components) return null
         const bounds = renderer.domElement.getBoundingClientRect()
-        if (bounds.width <= 0 || bounds.height <= 0) return
+        if (bounds.width <= 0 || bounds.height <= 0) return null
         pointer.set(
           ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
           -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
@@ -917,17 +1516,33 @@ export default function PcbViewer({
         raycaster.setFromCamera(pointer, camera)
         for (const intersection of raycaster.intersectObject(componentRoot, true)) {
           const designator = findPlacementDesignator(intersection.object, componentRoot)
-          if (!designator) continue
-          renderer.domElement.dataset.selectedDesignator = designator
-          onComponentSelectRef.current(designator)
-          break
+          if (designator) return designator
         }
+        return null
+      }
+      const handlePointerMove = (event: PointerEvent) => {
+        hoveredDesignatorRef.current = designatorAtPointer(event)
+        renderer.domElement.dataset.hoveredDesignator = hoveredDesignatorRef.current ?? ''
+      }
+      const handlePointerUp = (event: PointerEvent) => {
+        const start = pointerStart
+        pointerStart = null
+        if (!start || start.id !== event.pointerId) return
+        if ((event.clientX - start.x) ** 2 + (event.clientY - start.y) ** 2 > 36) return
+
+        const designator = designatorAtPointer(event)
+        if (!designator) return
+        renderer.domElement.dataset.selectedDesignator = designator
+        onComponentSelectRef.current(designator)
       }
       const clearPointerStart = () => {
         pointerStart = null
+        hoveredDesignatorRef.current = null
+        renderer.domElement.dataset.hoveredDesignator = ''
       }
       renderer.domElement.title = '点击元件以定位 BOM 行'
       renderer.domElement.addEventListener('pointerdown', handlePointerDown)
+      renderer.domElement.addEventListener('pointermove', handlePointerMove)
       renderer.domElement.addEventListener('pointerup', handlePointerUp)
       renderer.domElement.addEventListener('pointercancel', clearPointerStart)
       renderer.domElement.addEventListener('pointerleave', clearPointerStart)
@@ -957,26 +1572,50 @@ export default function PcbViewer({
       sceneRef.current = scene
       cameraRef.current = camera
       rendererRef.current = renderer
+      outlinePassRef.current = outlinePass
+      innerOutlinePassRef.current = innerOutlinePass
       controlsRef.current = controls
       gridRef.current = grid
 
       const resize = () => {
         const width = Math.max(host.clientWidth, 1)
         const height = Math.max(host.clientHeight, 1)
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
+        renderer.setPixelRatio(pixelRatio)
+        composer.setPixelRatio(pixelRatio)
         camera.aspect = width / height
         camera.updateProjectionMatrix()
         renderer.setSize(width, height, false)
+        composer.setSize(width, height)
+        const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2())
+        renderer.domElement.dataset.canvasClientSize = `${width}x${height}`
+        renderer.domElement.dataset.drawingBufferSize = `${drawingBufferSize.x}x${drawingBufferSize.y}`
+        renderer.domElement.dataset.pixelRatio = String(pixelRatio)
         setViewportRevision((revision) => revision + 1)
       }
       const observer = new ResizeObserver(resize)
       observer.observe(host)
       resize()
 
+      const cameraOffset = new THREE.Vector3()
       const animate = () => {
         controls.update()
         grid.position.z = camera.position.z >= 0 ? -4 : 4
         renderer.domElement.dataset.gridZ = String(grid.position.z)
         renderer.domElement.dataset.gridVisible = String(grid.visible)
+        renderer.domElement.dataset.cameraPosition = camera.position.toArray()
+          .map((value) => value.toFixed(3))
+          .join(',')
+        renderer.domElement.dataset.cameraTarget = controls.target.toArray()
+          .map((value) => value.toFixed(3))
+          .join(',')
+        renderer.domElement.dataset.cameraDirection = cameraOffset
+          .copy(camera.position)
+          .sub(controls.target)
+          .normalize()
+          .toArray()
+          .map((value) => value.toFixed(5))
+          .join(',')
         const boardRoot = boardRootRef.current
         if (boardRoot) {
           applyBoardVisibility(boardRoot, visibilityRef.current, camera.position.z)
@@ -994,6 +1633,8 @@ export default function PcbViewer({
         const componentRoot = componentRootRef.current
         if (componentRoot) {
           applyComponentVisibility(componentRoot, visibilityRef.current.components, camera.position.z)
+          const placementMarkers = componentRoot.children.filter((child) => child.userData.placementMarker)
+          renderer.domElement.dataset.cameraDistance = camera.position.distanceTo(controls.target).toFixed(3)
           renderer.domElement.dataset.alignmentMode = String(componentRoot.userData.alignmentMode)
           renderer.domElement.dataset.placementCount = String(componentRoot.userData.placementCount)
           renderer.domElement.dataset.placementInside = String(componentRoot.userData.insideCount)
@@ -1002,7 +1643,54 @@ export default function PcbViewer({
           renderer.domElement.dataset.modelLoaded = String(componentRoot.userData.modelLoadedCount)
           renderer.domElement.dataset.modelFailed = String(componentRoot.userData.modelFailedCount)
           renderer.domElement.dataset.visiblePlacements = String(
-            componentRoot.children.filter((child) => child.visible && child.userData.placementMarker).length,
+            placementMarkers.filter((child) => child.visible).length,
+          )
+          renderer.domElement.dataset.selectedPlacements = String(
+            placementMarkers.filter((child) => child.userData.selected).length,
+          )
+          renderer.domElement.dataset.focusedPlacements = String(
+            componentRoot.userData.selectionFocusCount ?? 0,
+          )
+          renderer.domElement.dataset.focusDistance = String(
+            componentRoot.userData.selectionFocusDistance ?? '',
+          )
+          renderer.domElement.dataset.focusMargin = String(
+            componentRoot.userData.selectionFocusMargin ?? '',
+          )
+          renderer.domElement.dataset.focusCoverage = String(
+            componentRoot.userData.selectionFocusCoverage ?? '',
+          )
+          renderer.domElement.dataset.focusTarget = String(
+            componentRoot.userData.selectionFocusTarget ?? '',
+          )
+          renderer.domElement.dataset.focusAnimation = String(
+            componentRoot.userData.selectionFocusAnimation ?? '',
+          )
+          renderer.domElement.dataset.selectionRequested = String(
+            componentRoot.userData.selectionRequestedCount ?? 0,
+          )
+          renderer.domElement.dataset.outlineSelected = String(outlinePass.selectedObjects.length)
+          renderer.domElement.dataset.postureValid = String(componentRoot.userData.postureValidCount ?? 0)
+          renderer.domElement.dataset.postureInvalid = String(
+            (componentRoot.userData.postureInvalidDesignators as string[] | undefined)?.join(',') ?? '',
+          )
+          renderer.domElement.dataset.contactValid = String(componentRoot.userData.contactValidCount ?? 0)
+          renderer.domElement.dataset.contactInvalid = String(
+            (componentRoot.userData.contactInvalidDesignators as string[] | undefined)?.join(',') ?? '',
+          )
+          renderer.domElement.dataset.topPlacementRotations = placementMarkers
+            .filter((marker) => marker.userData.surfaceSide === 'top')
+            .map((marker) => `${marker.userData.designator}:${marker.userData.appliedPlacementRotation}`)
+            .join(',')
+          renderer.domElement.dataset.bottomPlacementRotations = placementMarkers
+            .filter((marker) => marker.userData.surfaceSide === 'bottom')
+            .map((marker) => `${marker.userData.designator}:${marker.userData.appliedPlacementRotation}`)
+            .join(',')
+          renderer.domElement.dataset.rotatedPlacements = String(
+            placementMarkers.filter((child) => child.userData.appliedRotationZ !== 0).length,
+          )
+          renderer.domElement.dataset.flippedPlacements = String(
+            placementMarkers.filter((child) => child.userData.appliedRotationX !== 0).length,
           )
         } else {
           renderer.domElement.dataset.placementCount = '0'
@@ -1011,8 +1699,26 @@ export default function PcbViewer({
           renderer.domElement.dataset.modelLoaded = '0'
           renderer.domElement.dataset.modelFailed = '0'
           renderer.domElement.dataset.visiblePlacements = '0'
+          renderer.domElement.dataset.selectedPlacements = '0'
+          renderer.domElement.dataset.focusedPlacements = '0'
+          renderer.domElement.dataset.focusDistance = ''
+          renderer.domElement.dataset.focusMargin = ''
+          renderer.domElement.dataset.focusCoverage = ''
+          renderer.domElement.dataset.focusTarget = ''
+          renderer.domElement.dataset.focusAnimation = ''
+          renderer.domElement.dataset.selectionRequested = '0'
+          renderer.domElement.dataset.outlineSelected = '0'
+          renderer.domElement.dataset.postureValid = '0'
+          renderer.domElement.dataset.postureInvalid = ''
+          renderer.domElement.dataset.contactValid = '0'
+          renderer.domElement.dataset.contactInvalid = ''
+          renderer.domElement.dataset.topPlacementRotations = ''
+          renderer.domElement.dataset.bottomPlacementRotations = ''
+          renderer.domElement.dataset.rotatedPlacements = '0'
+          renderer.domElement.dataset.flippedPlacements = '0'
         }
-        renderer.render(scene, camera)
+        updateSelectionOverlay(camera, renderer.domElement)
+        composer.render()
         if (pixelCheckRequestedRef.current) {
           const context = renderer.getContext()
           const width = context.drawingBufferWidth
@@ -1046,14 +1752,24 @@ export default function PcbViewer({
       return () => {
         observer.disconnect()
         renderer.domElement.removeEventListener('pointerdown', handlePointerDown)
+        renderer.domElement.removeEventListener('pointermove', handlePointerMove)
         renderer.domElement.removeEventListener('pointerup', handlePointerUp)
         renderer.domElement.removeEventListener('pointercancel', clearPointerStart)
         renderer.domElement.removeEventListener('pointerleave', clearPointerStart)
         if (animationRef.current !== null) cancelAnimationFrame(animationRef.current)
+        cancelCameraFocusAnimation()
+        clearSelectionEffects()
+        controls.removeEventListener('start', cancelFocusOnInteraction)
         controls.dispose()
+        outlinePass.dispose()
+        innerOutlinePass.dispose()
+        outputPass.dispose()
+        composer.dispose()
         renderer.dispose()
         renderer.domElement.remove()
         scene.clear()
+        outlinePassRef.current = null
+        innerOutlinePassRef.current = null
       }
     } catch (error) {
       setRenderError(error instanceof Error ? error.message : 'WebGL 初始化失败')
@@ -1071,9 +1787,19 @@ export default function PcbViewer({
     if (!board) return
 
     try {
-      const object = buildBoardObject(board, thickness, boardColor, () => {
+      const renderer = rendererRef.current
+      const maxAnisotropy = renderer?.capabilities.getMaxAnisotropy() ?? 4
+      const maxTextureSize = renderer?.capabilities.maxTextureSize ?? 4096
+      const object = buildBoardObject(
+        board,
+        thickness,
+        boardColor,
+        maxAnisotropy,
+        maxTextureSize,
+        () => {
         pixelCheckRequestedRef.current = true
-      })
+        },
+      )
       scene.add(object)
       boardRootRef.current = object
       pixelCheckRequestedRef.current = true
@@ -1086,6 +1812,9 @@ export default function PcbViewer({
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
+    cancelCameraFocusAnimation()
+    clearSelectionEffects()
+    setSelectionNotice(null)
     if (componentRootRef.current) {
       componentRootRef.current.userData.disposed = true
       scene.remove(componentRootRef.current)
@@ -1094,21 +1823,63 @@ export default function PcbViewer({
     }
     if (!board || !alignment) return
 
-    const object = createPlacementObject(
+    let object: THREE.Group | null = null
+    const focusSelectionWhenReady = () => {
+      if (!object || object.userData.selectionFocusResolved || selectedDesignators.length === 0) return
+      const selectedMarkers = object.children.filter((child) => child.userData.selected)
+      if (selectedMarkers.length === 0) {
+        object.userData.selectionFocusResolved = true
+        setSelectionNotice('未找到对应的 PCB 元件')
+        return
+      }
+      const selectionIsReady = selectedMarkers.every(
+        (marker) => marker.userData.modelLoaded || marker.userData.modelError,
+      )
+      if (!selectionIsReady) return
+
+      const camera = cameraRef.current
+      const controls = controlsRef.current
+      const canvas = rendererRef.current?.domElement
+      if (!camera || !controls || !canvas) return
+      const focus = calculateSelectionCameraFocus(object, camera, controls, canvas)
+      object.userData.selectionFocusResolved = true
+      if (!focus) {
+        setSelectionNotice('未找到对应的 PCB 元件')
+        return
+      }
+      setSelectionNotice(null)
+      showSelectionEffects(focus.components)
+      if (animateCameraToSelection(object, focus)) pixelCheckRequestedRef.current = true
+    }
+
+    object = createPlacementObject(
       board,
       thickness,
       alignment,
       bomItems,
       selectedDesignators,
+      (bomItemId) => bomRowOrientationsRef.current.get(bomItemId),
       () => {
         pixelCheckRequestedRef.current = true
+        focusSelectionWhenReady()
       },
     )
+    object.userData.selectionRequestedCount = selectedDesignators.length
+    applyBomRowOrientations(object, bomRowOrientationsRef.current)
     scene.add(object)
     componentRootRef.current = object
     if (cameraRef.current) applyComponentVisibility(object, visibility.components, cameraRef.current.position.z)
+    focusSelectionWhenReady()
     pixelCheckRequestedRef.current = true
-  }, [board, thickness, alignment, bomItems, selectedDesignators, visibility.components])
+  }, [board, thickness, alignment, bomItems, selectedDesignators, selectionRevision])
+
+  useEffect(() => {
+    bomRowOrientationsRef.current = bomRowOrientations
+    const root = componentRootRef.current
+    if (!root) return
+    applyBomRowOrientations(root, bomRowOrientations)
+    pixelCheckRequestedRef.current = true
+  }, [bomRowOrientations])
 
   useEffect(() => {
     visibilityRef.current = visibility
@@ -1126,6 +1897,7 @@ export default function PcbViewer({
     const camera = cameraRef.current
     const controls = controlsRef.current
     if (!camera || !controls || !board) return
+    cancelCameraFocusAnimation()
     const halfFov = THREE.MathUtils.degToRad(camera.fov / 2)
     const fitHeight = board.heightMm / (2 * Math.tan(halfFov))
     const fitWidth = board.widthMm / (2 * Math.tan(halfFov) * Math.max(camera.aspect, 0.1))
@@ -1151,10 +1923,16 @@ export default function PcbViewer({
 
   return (
     <div className="viewer-host" ref={hostRef}>
+      <div className="viewer-selection-overlay" ref={selectionOverlayRef} aria-hidden="true" />
       {renderError && (
         <div className="viewer-error" role="alert">
           <strong>无法生成 3D 视图</strong>
           <span>{renderError}</span>
+        </div>
+      )}
+      {selectionNotice && (
+        <div className="viewer-selection-notice" role="status">
+          {selectionNotice}
         </div>
       )}
     </div>

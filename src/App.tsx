@@ -16,19 +16,25 @@ import {
   Database,
   FileArchive,
   FileSpreadsheet,
+  FlipVertical2,
   FolderOpen,
   Info,
   Layers3,
   LoaderCircle,
   MapPin,
   RefreshCw,
+  RotateCw,
   Search,
   Trash2,
   Undo2,
   Upload,
   X,
 } from 'lucide-react'
-import PcbViewer, { type CameraPreset, type LayerVisibility } from './PcbViewer'
+import PcbViewer, {
+  type CameraPreset,
+  type LayerVisibility,
+  type PackageOrientation,
+} from './PcbViewer'
 import FootprintModelBrowser, { type PreviewFootprintModel } from './FootprintModelBrowser'
 import {
   parseBomFile,
@@ -221,6 +227,9 @@ function App() {
   const [bomQuery, setBomQuery] = useState('')
   const [confirmedBomIds, setConfirmedBomIds] = useState<Set<string>>(() => new Set())
   const [selectedBomId, setSelectedBomId] = useState<string | null>(null)
+  const [bomRowOrientations, setBomRowOrientations] = useState<Map<string, PackageOrientation>>(
+    () => new Map(),
+  )
   const [bomSelectionRevision, setBomSelectionRevision] = useState(0)
   const [bomCellEdit, setBomCellEdit] = useState<BomCellEdit | null>(null)
   const [pendingBomItems, setPendingBomItems] = useState<PendingBomItem[]>([])
@@ -257,6 +266,23 @@ function App() {
     components: true,
     grid: true,
   })
+  const selectedBomItem = useMemo(
+    () => bomData?.items.find((item) => item.id === selectedBomId) ?? null,
+    [bomData, selectedBomId],
+  )
+
+  const adjustSelectedBomRowOrientation = (axis: keyof PackageOrientation) => {
+    if (!selectedBomItem) return
+    setBomRowOrientations((current) => {
+      const next = new Map(current)
+      const orientation = next.get(selectedBomItem.id) ?? { rotationZ: 0, rotationX: 0 }
+      next.set(selectedBomItem.id, {
+        ...orientation,
+        [axis]: (orientation[axis] + 90) % 360,
+      })
+      return next
+    })
+  }
 
   const clearManualLibraryModels = () => {
     manualLibraryModelsRef.current.forEach(disposePreviewFootprintModel)
@@ -277,6 +303,8 @@ function App() {
         setLoading({ active: true, progress, file })
       })
       setBoard(result)
+      setSelectedBomId(null)
+      setBomRowOrientations(new Map())
       setCameraPreset('iso')
       setCameraRevision((revision) => revision + 1)
       return true
@@ -308,6 +336,23 @@ function App() {
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [componentLibraryPageOpen])
+
+  useEffect(() => {
+    if (!selectedBomItem || componentLibraryPageOpen) return
+    const rotateSelectedComponent = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return
+      const target = event.target
+      if (target instanceof Element && target.closest('button, input, select, textarea, a, [contenteditable="true"]')) {
+        return
+      }
+      if (target instanceof HTMLElement && target !== document.body && !target.closest('.viewer-host')) return
+
+      event.preventDefault()
+      adjustSelectedBomRowOrientation('rotationZ')
+    }
+    window.addEventListener('keydown', rotateSelectedComponent)
+    return () => window.removeEventListener('keydown', rotateSelectedComponent)
+  }, [componentLibraryPageOpen, selectedBomItem])
 
   useEffect(() => {
     if (!selectedBomId) return
@@ -385,6 +430,7 @@ function App() {
     try {
       if (kind === 'bom') {
         const parsed = await parseBomFile(file)
+        setBomRowOrientations(new Map())
         setSourceBomData(parsed)
         reconcileBomWithLibrary(parsed, componentLibraryData)
         setBomFile(file)
@@ -392,6 +438,8 @@ function App() {
         const parsed = await parsePlacementFile(file)
         setPlacementData(parsed)
         setPlacementFile(file)
+        setSelectedBomId(null)
+        setBomRowOrientations(new Map())
       } else {
         const parsed = await parseComponentLibraryFile(file)
         clearManualLibraryModels()
@@ -452,8 +500,8 @@ function App() {
     [board, placementData],
   )
   const selectedDesignators = useMemo(
-    () => bomData?.items.find((item) => item.id === selectedBomId)?.designators ?? [],
-    [bomData, selectedBomId],
+    () => selectedBomItem?.designators ?? [],
+    [selectedBomItem],
   )
   const footprintSourceMatches = useMemo(
     () => matchBomFootprintSources(bomData?.items ?? []),
@@ -644,14 +692,15 @@ function App() {
     })
   }
 
-  const toggleSelectedBomItem = (itemId: string) => {
-    setSelectedBomId((current) => current === itemId ? null : itemId)
+  const selectBomItem = (itemId: string) => {
+    setSelectedBomId(itemId)
+    setBomSelectionRevision((revision) => revision + 1)
   }
 
   const selectBomItemByDesignator = (designator: string) => {
-    const normalizedDesignator = designator.trim().toLocaleUpperCase()
+    const normalizedDesignator = designator.trim().toUpperCase()
     const item = bomData?.items.find((candidate) => candidate.designators.some(
-      (candidateDesignator) => candidateDesignator.trim().toLocaleUpperCase() === normalizedDesignator,
+      (candidateDesignator) => candidateDesignator.trim().toUpperCase() === normalizedDesignator,
     ))
     if (!item) return
     setBomQuery('')
@@ -701,6 +750,12 @@ function App() {
       return next
     })
     setSelectedBomId((current) => current === item.id ? null : current)
+    setBomRowOrientations((current) => {
+      if (!current.has(item.id)) return current
+      const next = new Map(current)
+      next.delete(item.id)
+      return next
+    })
     setBomCellEdit((current) => current?.itemId === item.id ? null : current)
     setBomLibraryMatches((current) => {
       const next = new Map(current)
@@ -1307,16 +1362,17 @@ function App() {
                         className={[isConfirmed ? 'confirmed' : '', isSelected ? 'selected' : ''].filter(Boolean).join(' ')}
                         data-bom-id={item.id}
                         key={item.id}
-                        onClick={(event) => {
-                          const target = event.target
-                          if (target instanceof Element && target.closest('button, input, a, select, textarea')) return
-                          toggleSelectedBomItem(item.id)
-                        }}
+                        onClickCapture={() => selectBomItem(item.id)}
                         onKeyDown={(event) => {
                           if (event.target !== event.currentTarget) return
-                          if (event.key !== 'Enter' && event.key !== ' ') return
-                          event.preventDefault()
-                          toggleSelectedBomItem(item.id)
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            selectBomItem(item.id)
+                          } else if (event.key === ' ') {
+                            event.preventDefault()
+                            if (isSelected) adjustSelectedBomRowOrientation('rotationZ')
+                            else selectBomItem(item.id)
+                          }
                         }}
                         tabIndex={0}
                       >
@@ -1511,8 +1567,35 @@ function App() {
             alignment={placementAlignment}
             bomItems={pcbBomItems}
             selectedDesignators={selectedDesignators}
+            selectionRevision={bomSelectionRevision}
+            bomRowOrientations={bomRowOrientations}
             onComponentSelect={selectBomItemByDesignator}
           />
+
+          <div className="bom-row-orientation-controls" aria-label="选中 BOM 行方向调整">
+            <button
+              disabled={!selectedBomItem}
+              onClick={() => adjustSelectedBomRowOrientation('rotationZ')}
+              title={selectedBomItem
+                ? `将当前行的 ${selectedBomItem.designators.join(', ')} 水平旋转 90°`
+                : '先选择一条 BOM 核对行'}
+              type="button"
+            >
+              <RotateCw size={15} />
+              <span>90°旋转</span>
+            </button>
+            <button
+              disabled={!selectedBomItem}
+              onClick={() => adjustSelectedBomRowOrientation('rotationX')}
+              title={selectedBomItem
+                ? `将当前行的 ${selectedBomItem.designators.join(', ')} 竖直翻转 90°`
+                : '先选择一条 BOM 核对行'}
+              type="button"
+            >
+              <FlipVertical2 size={15} />
+              <span>90°翻转</span>
+            </button>
+          </div>
 
           {loading.active && (
             <div className="processing-overlay" role="status">
