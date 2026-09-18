@@ -1691,44 +1691,30 @@ function App() {
                 </span>
               </div>
             </div>
-            <div className="library-header-actions">
-              <button
-                className="library-view-toggle"
-                type="button"
-                disabled={!kingdeeDatabaseConnected}
-                aria-label={componentLibraryPageView === 'connection' ? '查看 BOM 数据' : '打开金蝶连接配置'}
-                title={!kingdeeDatabaseConnected
-                  ? '连接金蝶数据库后可用'
-                  : componentLibraryPageView === 'connection' ? '查看 BOM 数据' : '打开金蝶连接配置'}
-                onClick={() => {
-                  if (!kingdeeDatabaseConnected) return
-                  if (componentLibraryPageView === 'connection') {
-                    setComponentLibraryPageView('materials')
-                    if (!componentLibraryData && !kingdeeSyncing) {
-                      void syncComponentLibraryFromKingdee().catch(() => undefined)
-                    }
-                  } else {
-                    setComponentLibraryPageView('connection')
-                  }
-                }}
-              >
-                {componentLibraryPageView === 'connection' ? <Database size={15} /> : <ArrowLeft size={15} />}
-                <span>{componentLibraryPageView === 'connection' ? 'BOM 数据' : '连接配置'}</span>
-              </button>
-              <button
-                className="library-back-button"
-                type="button"
-                disabled={!kingdeeDatabaseConnected || !componentLibraryData}
-                aria-label="返回 PCB"
-                title={!kingdeeDatabaseConnected
-                  ? '连接金蝶数据库后可用'
-                  : !componentLibraryData ? '请先同步金蝶物料' : '返回 PCB'}
-                onClick={closeComponentLibraryPage}
-              >
-                <X size={16} />
-                <span>返回 PCB</span>
-              </button>
-            </div>
+            {componentLibraryPageView === 'materials' && (
+              <div className="library-header-actions">
+                <button
+                  className="library-view-toggle"
+                  type="button"
+                  aria-label="打开金蝶连接配置"
+                  title="打开金蝶连接配置"
+                  onClick={() => setComponentLibraryPageView('connection')}
+                >
+                  <ArrowLeft size={15} />
+                  <span>连接配置</span>
+                </button>
+                <button
+                  className="library-back-button"
+                  type="button"
+                  aria-label="返回 PCB"
+                  title="返回 PCB"
+                  onClick={closeComponentLibraryPage}
+                >
+                  <X size={16} />
+                  <span>返回 PCB</span>
+                </button>
+              </div>
+            )}
           </header>
 
           {componentLibraryPageView === 'connection' ? (
