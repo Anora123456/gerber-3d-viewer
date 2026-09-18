@@ -1,0 +1,1797 @@
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowDownToLine,
+  ArrowUpToLine,
+  CheckCircle2,
+  Cuboid,
+  Database,
+  FileArchive,
+  FileSpreadsheet,
+  FolderOpen,
+  Info,
+  Layers3,
+  LoaderCircle,
+  MapPin,
+  RefreshCw,
+  Search,
+  Trash2,
+  Undo2,
+  Upload,
+  X,
+} from 'lucide-react'
+import PcbViewer, { type CameraPreset, type LayerVisibility } from './PcbViewer'
+import FootprintModelBrowser, { type PreviewFootprintModel } from './FootprintModelBrowser'
+import {
+  parseBomFile,
+  parseComponentLibraryFile,
+  parsePlacementFile,
+  type BomItem,
+  type ComponentLibraryItem,
+  type ParsedBomFile,
+  type ParsedComponentLibraryFile,
+  type ParsedPlacementFile,
+} from './assembly-data'
+import {
+  layerNames,
+  parseBoard,
+  readSourceFiles,
+  selectBoardProfile,
+  type ParsedBoard,
+  type SourceFile,
+} from './gerber'
+import {
+  footprintModels,
+  footprintSources,
+  matchBomFootprintSources,
+  matchComponentLibraryFootprint,
+  normalizeFootprintName,
+} from './footprint-library'
+import {
+  matchBomItemToLibrary,
+  matchBomItemsToLibrary,
+  type BomLibraryMatch,
+} from './component-library-matching'
+import { alignPlacements } from './placement-alignment'
+import { createSampleSources } from './sample-board'
+import { disposeObject3D, parsePreviewModelFile } from './step-model'
+
+const colorOptions = [
+  { name: '绿色阻焊', value: '#11734a' },
+  { name: '蓝色阻焊', value: '#2f78a8' },
+  { name: '红色阻焊', value: '#b64040' },
+  { name: '黑色阻焊', value: '#303531' },
+]
+
+const visibilityLabels: Array<{ key: keyof LayerVisibility; label: string; color: string }> = [
+  { key: 'board', label: '基材', color: '#d8ad4f' },
+  { key: 'copper', label: '铜层', color: '#d0a84f' },
+  { key: 'mask', label: '阻焊', color: '#1b9b68' },
+  { key: 'silkscreen', label: '丝印', color: '#eeeae0' },
+  { key: 'drill', label: '钻孔', color: '#080b09' },
+  { key: 'components', label: '元件位置', color: '#7e8b85' },
+  { key: 'grid', label: '网格', color: '#58685e' },
+]
+
+type BomColumnKey = 'check' | 'sku' | 'name' | 'spec' | 'description' | 'designator'
+  | 'quantity' | 'footprint' | 'actions'
+
+type BomColumnDefinition = {
+  key: BomColumnKey
+  label: string
+  className: string
+  headerClassName?: string
+  defaultWidth: number
+  minWidth: number
+  maxWidth: number
+}
+
+type LibraryColumnKey = 'sku' | 'name' | 'dataStatus' | 'disabledStatus' | 'unit' | 'used' | 'model'
+
+type LibraryColumnDefinition = {
+  key: LibraryColumnKey
+  label: string
+  defaultWidth: number
+  minWidth: number
+  maxWidth: number
+}
+
+type BomCellEdit = {
+  itemId: string
+  field: 'materialName' | 'spec'
+  value: string
+}
+
+type PendingBomItem = {
+  item: BomItem
+  index: number
+}
+
+const bomTableColumns: BomColumnDefinition[] = [
+  { key: 'check', label: '确认状态', className: 'bom-col-check', headerClassName: 'bom-check-cell', defaultWidth: 36, minWidth: 32, maxWidth: 72 },
+  { key: 'sku', label: '编码', className: 'bom-col-sku', defaultWidth: 82, minWidth: 56, maxWidth: 420 },
+  { key: 'name', label: '物料名称', className: 'bom-col-name', defaultWidth: 110, minWidth: 72, maxWidth: 520 },
+  { key: 'spec', label: '规格', className: 'bom-col-spec', defaultWidth: 120, minWidth: 72, maxWidth: 520 },
+  { key: 'description', label: '名称', className: 'bom-col-description', defaultWidth: 140, minWidth: 72, maxWidth: 640 },
+  { key: 'footprint', label: '封装', className: 'bom-col-footprint', defaultWidth: 90, minWidth: 64, maxWidth: 420 },
+  { key: 'designator', label: '位号', className: 'bom-col-designator', defaultWidth: 88, minWidth: 60, maxWidth: 420 },
+  { key: 'quantity', label: '数量', className: 'bom-col-quantity', defaultWidth: 40, minWidth: 40, maxWidth: 120 },
+  { key: 'actions', label: '操作', className: 'bom-col-actions', headerClassName: 'bom-actions-heading', defaultWidth: 154, minWidth: 140, maxWidth: 260 },
+]
+
+function defaultBomColumnWidths(): Record<BomColumnKey, number> {
+  return Object.fromEntries(
+    bomTableColumns.map((column) => [column.key, column.defaultWidth]),
+  ) as Record<BomColumnKey, number>
+}
+
+const libraryTableColumns: LibraryColumnDefinition[] = [
+  { key: 'sku', label: '编码', defaultWidth: 150, minWidth: 88, maxWidth: 420 },
+  { key: 'name', label: '名称', defaultWidth: 480, minWidth: 180, maxWidth: 820 },
+  { key: 'dataStatus', label: '数据状态', defaultWidth: 150, minWidth: 84, maxWidth: 320 },
+  { key: 'disabledStatus', label: '禁用状态', defaultWidth: 150, minWidth: 84, maxWidth: 320 },
+  { key: 'unit', label: '单位', defaultWidth: 110, minWidth: 64, maxWidth: 220 },
+  { key: 'used', label: '已使用', defaultWidth: 110, minWidth: 64, maxWidth: 220 },
+  { key: 'model', label: '3D封装', defaultWidth: 116, minWidth: 96, maxWidth: 220 },
+]
+
+function defaultLibraryColumnWidths(): Record<LibraryColumnKey, number> {
+  return Object.fromEntries(
+    libraryTableColumns.map((column) => [column.key, column.defaultWidth]),
+  ) as Record<LibraryColumnKey, number>
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function shortDesignators(designators: string[]): string {
+  if (designators.length === 0) return '—'
+  if (designators.length <= 3) return designators.join(', ')
+  return `${designators.slice(0, 2).join(', ')} +${designators.length - 2}`
+}
+
+function bomPrimaryText(item: BomItem): string {
+  return item.partNumber || item.value || item.materialName || item.description || '未命名物料'
+}
+
+function componentLibraryDisplayName(materialName: string): string {
+  return materialName.replaceAll('【停售】', '').trim()
+}
+
+function componentLibraryField(materialName: string): string {
+  const displayName = componentLibraryDisplayName(materialName)
+  const separatorIndex = displayName.indexOf('|')
+  if (separatorIndex < 0) return '未分类'
+  return displayName.slice(0, separatorIndex).trim() || '未分类'
+}
+
+function enrichBomItemFromLibrary(item: BomItem, libraryItem: ComponentLibraryItem): BomItem {
+  return {
+    ...item,
+    sku: libraryItem.sku,
+    description: componentLibraryDisplayName(libraryItem.materialName),
+  }
+}
+
+function disposePreviewFootprintModel(model: PreviewFootprintModel) {
+  if (model.object) disposeObject3D(model.object)
+}
+
+function App() {
+  const gerberInputRef = useRef<HTMLInputElement>(null)
+  const bomInputRef = useRef<HTMLInputElement>(null)
+  const bomTableWrapRef = useRef<HTMLDivElement | null>(null)
+  const placementInputRef = useRef<HTMLInputElement>(null)
+  const componentLibraryInputRef = useRef<HTMLInputElement>(null)
+  const manualModelInputRef = useRef<HTMLInputElement>(null)
+  const [board, setBoard] = useState<ParsedBoard | null>(null)
+  const [gerberImportName, setGerberImportName] = useState('内置示例')
+  const [bomFile, setBomFile] = useState<File | null>(null)
+  const [placementFile, setPlacementFile] = useState<File | null>(null)
+  const [bomData, setBomData] = useState<ParsedBomFile | null>(null)
+  const [sourceBomData, setSourceBomData] = useState<ParsedBomFile | null>(null)
+  const [bomLibraryMatches, setBomLibraryMatches] = useState<Map<string, BomLibraryMatch>>(
+    () => new Map(),
+  )
+  const [placementData, setPlacementData] = useState<ParsedPlacementFile | null>(null)
+  const [componentLibraryFile, setComponentLibraryFile] = useState<File | null>(null)
+  const [componentLibraryData, setComponentLibraryData] = useState<ParsedComponentLibraryFile | null>(null)
+  const [componentLibraryPageOpen, setComponentLibraryPageOpen] = useState(false)
+  const [componentLibraryQuery, setComponentLibraryQuery] = useState('')
+  const [componentLibraryFieldFilter, setComponentLibraryFieldFilter] = useState<string | null>(null)
+  const [manualLibraryModels, setManualLibraryModels] = useState<Map<string, PreviewFootprintModel>>(
+    () => new Map(),
+  )
+  const manualLibraryModelsRef = useRef(manualLibraryModels)
+  const [manualModelTargetId, setManualModelTargetId] = useState<string | null>(null)
+  const [manualModelLoadingId, setManualModelLoadingId] = useState<string | null>(null)
+  const [selectedLibraryItemId, setSelectedLibraryItemId] = useState<string | null>(null)
+  const [selectedLibraryModelPath, setSelectedLibraryModelPath] = useState<string | null | undefined>(undefined)
+  const [bomQuery, setBomQuery] = useState('')
+  const [confirmedBomIds, setConfirmedBomIds] = useState<Set<string>>(() => new Set())
+  const [selectedBomId, setSelectedBomId] = useState<string | null>(null)
+  const [bomSelectionRevision, setBomSelectionRevision] = useState(0)
+  const [bomCellEdit, setBomCellEdit] = useState<BomCellEdit | null>(null)
+  const [pendingBomItems, setPendingBomItems] = useState<PendingBomItem[]>([])
+  const [bomColumnWidths, setBomColumnWidths] = useState(defaultBomColumnWidths)
+  const [resizingBomColumn, setResizingBomColumn] = useState<BomColumnKey | null>(null)
+  const bomColumnDragRef = useRef<{
+    key: BomColumnKey
+    pointerId: number
+    startX: number
+    startWidth: number
+  } | null>(null)
+  const [libraryColumnWidths, setLibraryColumnWidths] = useState(defaultLibraryColumnWidths)
+  const [resizingLibraryColumn, setResizingLibraryColumn] = useState<LibraryColumnKey | null>(null)
+  const libraryColumnDragRef = useRef<{
+    key: LibraryColumnKey
+    pointerId: number
+    startX: number
+    startWidth: number
+  } | null>(null)
+  const [auxiliaryLoading, setAuxiliaryLoading] = useState<'bom' | 'placement' | 'library' | null>(null)
+  const [loading, setLoading] = useState({ active: true, progress: 0, file: '示例板' })
+  const [error, setError] = useState<string | null>(null)
+  const [draggingImport, setDraggingImport] = useState<'gerber' | 'bom' | 'placement' | 'library' | null>(null)
+  const [thickness, setThickness] = useState(1.6)
+  const [boardColor, setBoardColor] = useState(colorOptions[0].value)
+  const [cameraPreset, setCameraPreset] = useState<CameraPreset>('iso')
+  const [cameraRevision, setCameraRevision] = useState(0)
+  const [visibility, setVisibility] = useState<LayerVisibility>({
+    board: true,
+    copper: true,
+    mask: true,
+    silkscreen: true,
+    drill: true,
+    components: true,
+    grid: true,
+  })
+
+  const clearManualLibraryModels = () => {
+    manualLibraryModelsRef.current.forEach(disposePreviewFootprintModel)
+    const emptyModels = new Map<string, PreviewFootprintModel>()
+    manualLibraryModelsRef.current = emptyModels
+    setManualLibraryModels(emptyModels)
+    setManualModelTargetId(null)
+    setManualModelLoadingId(null)
+    setSelectedLibraryItemId(null)
+    setSelectedLibraryModelPath(undefined)
+  }
+
+  const loadSources = async (sources: SourceFile[]) => {
+    setLoading({ active: true, progress: 0, file: sources[0]?.name ?? '' })
+    setError(null)
+    try {
+      const result = await parseBoard(sources, (progress, file) => {
+        setLoading({ active: true, progress, file })
+      })
+      setBoard(result)
+      setCameraPreset('iso')
+      setCameraRevision((revision) => revision + 1)
+      return true
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '文件处理失败')
+      return false
+    } finally {
+      setLoading((current) => ({ ...current, active: false }))
+    }
+  }
+
+  useEffect(() => {
+    void loadSources(createSampleSources())
+  }, [])
+
+  useEffect(() => {
+    manualLibraryModelsRef.current = manualLibraryModels
+  }, [manualLibraryModels])
+
+  useEffect(() => () => {
+    manualLibraryModelsRef.current.forEach(disposePreviewFootprintModel)
+  }, [])
+
+  useEffect(() => {
+    if (!componentLibraryPageOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setComponentLibraryPageOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [componentLibraryPageOpen])
+
+  useEffect(() => {
+    if (!selectedBomId) return
+    const frame = requestAnimationFrame(() => {
+      const wrap = bomTableWrapRef.current
+      const row = wrap?.querySelector<HTMLTableRowElement>('tbody tr[aria-selected="true"]')
+      if (!row || !wrap) return
+      const headerHeight = wrap.querySelector('thead')?.offsetHeight ?? 0
+      const rowTop = row.offsetTop
+      const rowBottom = rowTop + row.offsetHeight
+      const visibleTop = wrap.scrollTop + headerHeight
+      const visibleBottom = wrap.scrollTop + wrap.clientHeight
+      if (rowTop < visibleTop) wrap.scrollTop = Math.max(0, rowTop - headerHeight)
+      else if (rowBottom > visibleBottom) wrap.scrollTop = rowBottom - wrap.clientHeight
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [selectedBomId, bomQuery, bomSelectionRevision])
+
+  const reconcileBomWithLibrary = (
+    source: ParsedBomFile,
+    library: ParsedComponentLibraryFile | null,
+  ) => {
+    const matches = matchBomItemsToLibrary(source.items, library?.items ?? [])
+    const matchedItems: BomItem[] = []
+    const unmatchedItems: PendingBomItem[] = []
+    source.items.forEach((item, index) => {
+      const match = matches.get(item.id)
+      if (match) matchedItems.push(enrichBomItemFromLibrary(item, match.libraryItem))
+      else unmatchedItems.push({ item, index })
+    })
+    setBomData({ ...source, items: matchedItems })
+    setPendingBomItems(unmatchedItems)
+    setBomLibraryMatches(matches)
+    setBomQuery('')
+    setConfirmedBomIds(new Set())
+    setSelectedBomId(null)
+    setBomCellEdit(null)
+  }
+
+  const handleGerberFiles = async (files: File[]) => {
+    if (files.length === 0) return
+    setLoading({ active: true, progress: 0, file: '读取文件' })
+    setError(null)
+    try {
+      const sources = await readSourceFiles(files)
+      const loaded = await loadSources(sources)
+      if (loaded) {
+        setGerberImportName(files.length === 1 ? files[0].name : `${files.length} 个文件`)
+      }
+    } catch (fileError) {
+      setError(fileError instanceof Error ? fileError.message : '无法读取所选文件')
+      setLoading((current) => ({ ...current, active: false }))
+    }
+  }
+
+  const handleAuxiliaryFile = async (kind: 'bom' | 'placement' | 'library', file?: File) => {
+    if (!file) return
+    const allowed = kind === 'bom' || kind === 'library'
+      ? /\.(?:xlsx?|csv|tsv)$/i
+      : /\.(?:xlsx?|csv|tsv|txt|pos)$/i
+    if (!allowed.test(file.name)) {
+      setError(kind === 'bom'
+        ? 'BOM 仅支持 XLSX、XLS、CSV 或 TSV 文件'
+        : kind === 'library'
+          ? '元件库仅支持 XLSX、XLS、CSV 或 TSV 文件'
+          : '坐标文件仅支持 XLSX、XLS、CSV、TSV、TXT 或 POS 文件')
+      return
+    }
+    if (file.size > 24 * 1024 * 1024) {
+      setError(`${file.name} 超过 24 MB 限制`)
+      return
+    }
+    setError(null)
+    setAuxiliaryLoading(kind)
+    try {
+      if (kind === 'bom') {
+        const parsed = await parseBomFile(file)
+        setSourceBomData(parsed)
+        reconcileBomWithLibrary(parsed, componentLibraryData)
+        setBomFile(file)
+      } else if (kind === 'placement') {
+        const parsed = await parsePlacementFile(file)
+        setPlacementData(parsed)
+        setPlacementFile(file)
+      } else {
+        const parsed = await parseComponentLibraryFile(file)
+        clearManualLibraryModels()
+        setComponentLibraryData(parsed)
+        setComponentLibraryFile(file)
+        setComponentLibraryQuery('')
+        setComponentLibraryFieldFilter(null)
+        if (sourceBomData) reconcileBomWithLibrary(sourceBomData, parsed)
+      }
+    } catch (parseError) {
+      const label = kind === 'bom' ? 'BOM' : kind === 'placement' ? '坐标文件' : '元件库'
+      setError(`${label} 解析失败：${parseError instanceof Error ? parseError.message : '文件格式不受支持'}`)
+    } finally {
+      setAuxiliaryLoading(null)
+    }
+  }
+
+  const handleImportDrop = (kind: 'gerber' | 'bom' | 'placement' | 'library', files: File[]) => {
+    setDraggingImport(null)
+    if (kind === 'gerber') void handleGerberFiles(files)
+    else void handleAuxiliaryFile(kind, files[0])
+  }
+
+  const choosePreset = (preset: CameraPreset) => {
+    setCameraPreset(preset)
+    setCameraRevision((revision) => revision + 1)
+  }
+
+  const toggleVisibility = (key: keyof LayerVisibility) => {
+    setVisibility((current) => ({ ...current, [key]: !current[key] }))
+  }
+
+  const profileCandidates = board?.profileCandidates.flatMap((id) => {
+    const layer = board.layers.find((candidate) => candidate.id === id)
+    return layer ? [layer] : []
+  }) ?? []
+  const importReadyCount = Number(Boolean(board)) + Number(Boolean(bomFile)) + Number(Boolean(placementFile))
+  const placementDesignators = useMemo(
+    () => new Set(placementData?.placements.map((placement) => placement.designator) ?? []),
+    [placementData],
+  )
+  const bomComponentCount = useMemo(
+    () => bomData?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0,
+    [bomData],
+  )
+  const bomDesignatorCount = useMemo(
+    () => bomData?.items.reduce((sum, item) => sum + item.designators.length, 0) ?? 0,
+    [bomData],
+  )
+  const matchedDesignatorCount = useMemo(
+    () => bomData?.items.reduce((sum, item) => (
+      sum + item.designators.filter((designator) => placementDesignators.has(designator)).length
+    ), 0) ?? 0,
+    [bomData, placementDesignators],
+  )
+  const placementAlignment = useMemo(
+    () => board && placementData ? alignPlacements(board, placementData.placements) : null,
+    [board, placementData],
+  )
+  const selectedDesignators = useMemo(
+    () => bomData?.items.find((item) => item.id === selectedBomId)?.designators ?? [],
+    [bomData, selectedBomId],
+  )
+  const footprintSourceMatches = useMemo(
+    () => matchBomFootprintSources(bomData?.items ?? []),
+    [bomData],
+  )
+  const pcbBomItems = useMemo(
+    () => (bomData?.items ?? []).filter((item) => bomLibraryMatches.has(item.id)),
+    [bomData, bomLibraryMatches],
+  )
+  const filteredBomItems = useMemo(() => {
+    const query = bomQuery.trim().toLocaleLowerCase()
+    if (!query) return bomData?.items ?? []
+    return (bomData?.items ?? []).filter((item) => [
+      ...item.designators,
+      item.sku,
+      item.materialName,
+      item.value,
+      item.footprint,
+      item.partNumber,
+      item.manufacturer,
+      item.description,
+    ].some((value) => value.toLocaleLowerCase().includes(query)))
+  }, [bomData, bomQuery])
+  const filteredComponentLibraryItems = useMemo(() => {
+    const query = componentLibraryQuery.trim().toLocaleLowerCase()
+    return (componentLibraryData?.items ?? []).filter((item) => [
+      componentLibraryFieldFilter === null
+        || componentLibraryField(item.materialName) === componentLibraryFieldFilter,
+      !query || [
+        item.sku,
+        item.materialName,
+        item.specification,
+        item.dataStatus,
+        item.disabledStatus,
+        item.materialProperty,
+        item.unit,
+        item.used,
+      ].some((value) => value.toLocaleLowerCase().includes(query)),
+    ].every(Boolean))
+  }, [componentLibraryData, componentLibraryFieldFilter, componentLibraryQuery])
+  const componentLibraryFields = useMemo(() => {
+    const counts = new Map<string, number>()
+    componentLibraryData?.items.forEach((item) => {
+      const field = componentLibraryField(item.materialName)
+      counts.set(field, (counts.get(field) ?? 0) + 1)
+    })
+    return [...counts.entries()]
+      .map(([field, count]) => ({ field, count }))
+      .sort((left, right) => right.count - left.count || left.field.localeCompare(right.field, 'zh-CN'))
+  }, [componentLibraryData])
+  const componentLibraryFootprintMatches = useMemo(() => {
+    const matches = new Map<string, NonNullable<ReturnType<typeof matchComponentLibraryFootprint>>>()
+    componentLibraryData?.items.forEach((item) => {
+      const match = matchComponentLibraryFootprint(item)
+      if (match) matches.set(item.id, match)
+    })
+    return matches
+  }, [componentLibraryData])
+  const libraryPreviewModels = useMemo(
+    () => [...footprintModels, ...manualLibraryModels.values()],
+    [manualLibraryModels],
+  )
+  const confirmedBomCount = useMemo(
+    () => bomData?.items.filter((item) => confirmedBomIds.has(item.id)).length ?? 0,
+    [bomData, confirmedBomIds],
+  )
+  const bomTableWidth = useMemo(
+    () => bomTableColumns.reduce((total, column) => total + bomColumnWidths[column.key], 0),
+    [bomColumnWidths],
+  )
+  const libraryTableWidth = useMemo(
+    () => libraryTableColumns.reduce((total, column) => total + libraryColumnWidths[column.key], 0),
+    [libraryColumnWidths],
+  )
+
+  const setBomColumnWidth = (column: BomColumnDefinition, width: number) => {
+    const nextWidth = Math.min(column.maxWidth, Math.max(column.minWidth, Math.round(width)))
+    setBomColumnWidths((current) => current[column.key] === nextWidth
+      ? current
+      : { ...current, [column.key]: nextWidth })
+  }
+
+  const startBomColumnResize = (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    column: BomColumnDefinition,
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    bomColumnDragRef.current = {
+      key: column.key,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: bomColumnWidths[column.key],
+    }
+    setResizingBomColumn(column.key)
+  }
+
+  const moveBomColumnResize = (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    column: BomColumnDefinition,
+  ) => {
+    const drag = bomColumnDragRef.current
+    if (!drag || drag.key !== column.key || drag.pointerId !== event.pointerId) return
+    event.preventDefault()
+    setBomColumnWidth(column, drag.startWidth + event.clientX - drag.startX)
+  }
+
+  const stopBomColumnResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    const drag = bomColumnDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    bomColumnDragRef.current = null
+    setResizingBomColumn(null)
+  }
+
+  const handleBomColumnResizeKey = (
+    event: ReactKeyboardEvent<HTMLSpanElement>,
+    column: BomColumnDefinition,
+  ) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    const direction = event.key === 'ArrowRight' ? 1 : -1
+    setBomColumnWidth(column, bomColumnWidths[column.key] + direction * (event.shiftKey ? 20 : 8))
+  }
+
+  const setLibraryColumnWidth = (column: LibraryColumnDefinition, width: number) => {
+    const nextWidth = Math.min(column.maxWidth, Math.max(column.minWidth, Math.round(width)))
+    setLibraryColumnWidths((current) => current[column.key] === nextWidth
+      ? current
+      : { ...current, [column.key]: nextWidth })
+  }
+
+  const startLibraryColumnResize = (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    column: LibraryColumnDefinition,
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    libraryColumnDragRef.current = {
+      key: column.key,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: libraryColumnWidths[column.key],
+    }
+    setResizingLibraryColumn(column.key)
+  }
+
+  const moveLibraryColumnResize = (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    column: LibraryColumnDefinition,
+  ) => {
+    const drag = libraryColumnDragRef.current
+    if (!drag || drag.key !== column.key || drag.pointerId !== event.pointerId) return
+    event.preventDefault()
+    setLibraryColumnWidth(column, drag.startWidth + event.clientX - drag.startX)
+  }
+
+  const stopLibraryColumnResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    const drag = libraryColumnDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    libraryColumnDragRef.current = null
+    setResizingLibraryColumn(null)
+  }
+
+  const handleLibraryColumnResizeKey = (
+    event: ReactKeyboardEvent<HTMLSpanElement>,
+    column: LibraryColumnDefinition,
+  ) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    const direction = event.key === 'ArrowRight' ? 1 : -1
+    setLibraryColumnWidth(column, libraryColumnWidths[column.key] + direction * (event.shiftKey ? 20 : 8))
+  }
+
+  const toggleBomConfirmation = (itemId: string) => {
+    setConfirmedBomIds((current) => {
+      const next = new Set(current)
+      if (next.has(itemId)) next.delete(itemId)
+      else next.add(itemId)
+      return next
+    })
+  }
+
+  const toggleSelectedBomItem = (itemId: string) => {
+    setSelectedBomId((current) => current === itemId ? null : itemId)
+  }
+
+  const selectBomItemByDesignator = (designator: string) => {
+    const normalizedDesignator = designator.trim().toLocaleUpperCase()
+    const item = bomData?.items.find((candidate) => candidate.designators.some(
+      (candidateDesignator) => candidateDesignator.trim().toLocaleUpperCase() === normalizedDesignator,
+    ))
+    if (!item) return
+    setBomQuery('')
+    setBomCellEdit(null)
+    setSelectedBomId(item.id)
+    setBomSelectionRevision((revision) => revision + 1)
+  }
+
+  const startBomCellEdit = (item: BomItem, field: BomCellEdit['field']) => {
+    setBomCellEdit({
+      itemId: item.id,
+      field,
+      value: field === 'materialName' ? item.materialName : item.value || item.partNumber,
+    })
+  }
+
+  const saveBomCellEdit = (edit: BomCellEdit) => {
+    const value = edit.value.trim()
+    setBomData((current) => current
+      ? {
+          ...current,
+          items: current.items.map((item) => {
+            if (item.id !== edit.itemId) return item
+            return edit.field === 'materialName'
+              ? { ...item, materialName: value }
+              : { ...item, value }
+          }),
+        }
+      : current)
+    setBomCellEdit((current) => (
+      current?.itemId === edit.itemId && current.field === edit.field ? null : current
+    ))
+  }
+
+  const moveBomItemToPending = (item: BomItem) => {
+    const itemIndex = bomData?.items.findIndex((candidate) => candidate.id === item.id) ?? -1
+    if (itemIndex < 0) return
+    setPendingBomItems((current) => current.some((entry) => entry.item.id === item.id)
+      ? current
+      : [...current, { item, index: itemIndex }])
+    setBomData((current) => current
+      ? { ...current, items: current.items.filter((candidate) => candidate.id !== item.id) }
+      : current)
+    setConfirmedBomIds((current) => {
+      const next = new Set(current)
+      next.delete(item.id)
+      return next
+    })
+    setSelectedBomId((current) => current === item.id ? null : current)
+    setBomCellEdit((current) => current?.itemId === item.id ? null : current)
+    setBomLibraryMatches((current) => {
+      const next = new Map(current)
+      next.delete(item.id)
+      return next
+    })
+  }
+
+  const restorePendingBomItem = (entry: PendingBomItem) => {
+    const libraryMatch = matchBomItemToLibrary(entry.item, componentLibraryData?.items ?? [])
+    const restoredItem = libraryMatch
+      ? enrichBomItemFromLibrary(entry.item, libraryMatch.libraryItem)
+      : entry.item
+    setPendingBomItems((current) => current.filter((candidate) => candidate.item.id !== entry.item.id))
+    setBomData((current) => {
+      if (!current || current.items.some((item) => item.id === entry.item.id)) return current
+      const items = [...current.items]
+      items.splice(Math.min(entry.index, items.length), 0, restoredItem)
+      return { ...current, items }
+    })
+    if (libraryMatch) {
+      setBomLibraryMatches((current) => new Map(current).set(entry.item.id, libraryMatch))
+    }
+  }
+
+  const selectComponentLibraryItem = (itemId: string) => {
+    const previewModel = manualLibraryModels.get(itemId)
+      ?? componentLibraryFootprintMatches.get(itemId)?.model
+    setSelectedLibraryItemId(itemId)
+    setSelectedLibraryModelPath(previewModel?.sourcePath ?? null)
+  }
+
+  const openManualModelImport = (itemId: string) => {
+    selectComponentLibraryItem(itemId)
+    setManualModelTargetId(itemId)
+    manualModelInputRef.current?.click()
+  }
+
+  const handleManualModelFile = async (file?: File) => {
+    const itemId = manualModelTargetId
+    if (!file || !itemId) {
+      setManualModelTargetId(null)
+      return
+    }
+    if (!/\.(?:step|stp|glb)$/i.test(file.name)) {
+      setError('3D封装仅支持 STEP、STP 或 GLB 文件')
+      setManualModelTargetId(null)
+      return
+    }
+    if (file.size > 80 * 1024 * 1024) {
+      setError(`${file.name} 超过 80 MB 限制`)
+      setManualModelTargetId(null)
+      return
+    }
+
+    setError(null)
+    setManualModelLoadingId(itemId)
+    try {
+      const object = await parsePreviewModelFile(file)
+      const name = file.name.replace(/\.(?:step|stp|glb)$/i, '')
+      const model: PreviewFootprintModel = {
+        name,
+        normalizedName: normalizeFootprintName(name),
+        sourcePath: `manual:${itemId}:${file.lastModified}:${file.name}`,
+        url: '',
+        object,
+      }
+      const nextModels = new Map(manualLibraryModelsRef.current)
+      const previousModel = nextModels.get(itemId)
+      if (previousModel) disposePreviewFootprintModel(previousModel)
+      nextModels.set(itemId, model)
+      manualLibraryModelsRef.current = nextModels
+      setManualLibraryModels(nextModels)
+      setSelectedLibraryItemId(itemId)
+      setSelectedLibraryModelPath(model.sourcePath)
+    } catch (modelError) {
+      setError(`3D封装导入失败：${modelError instanceof Error ? modelError.message : '无法读取模型文件'}`)
+    } finally {
+      setManualModelLoadingId(null)
+      setManualModelTargetId(null)
+    }
+  }
+
+  const closeComponentLibraryPage = () => {
+    setComponentLibraryPageOpen(false)
+    setDraggingImport(null)
+    setError(null)
+  }
+
+  const renderBomColumnGroup = () => (
+    <colgroup>
+      {bomTableColumns.map((column) => (
+        <col
+          className={column.className}
+          key={column.key}
+          style={{ width: bomColumnWidths[column.key] }}
+        />
+      ))}
+    </colgroup>
+  )
+
+  const renderBomTableHeader = () => (
+    <thead>
+      <tr>
+        {bomTableColumns.map((column) => (
+          <th
+            className={column.headerClassName}
+            key={column.key}
+            aria-label={column.key === 'check' ? column.label : undefined}
+          >
+            {column.key !== 'check' && column.label}
+            <span
+              aria-label={`调整${column.label}列宽`}
+              aria-orientation="vertical"
+              aria-valuemax={column.maxWidth}
+              aria-valuemin={column.minWidth}
+              aria-valuenow={bomColumnWidths[column.key]}
+              aria-valuetext={`${bomColumnWidths[column.key]} 像素`}
+              className={`bom-column-resizer ${resizingBomColumn === column.key ? 'active' : ''}`}
+              onDoubleClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                setBomColumnWidth(column, column.defaultWidth)
+              }}
+              onKeyDown={(event) => handleBomColumnResizeKey(event, column)}
+              onLostPointerCapture={() => {
+                if (bomColumnDragRef.current?.key !== column.key) return
+                bomColumnDragRef.current = null
+                setResizingBomColumn(null)
+              }}
+              onPointerCancel={stopBomColumnResize}
+              onPointerDown={(event) => startBomColumnResize(event, column)}
+              onPointerMove={(event) => moveBomColumnResize(event, column)}
+              onPointerUp={stopBomColumnResize}
+              role="separator"
+              tabIndex={0}
+              title="拖动调整列宽；双击恢复默认宽度"
+            />
+          </th>
+        ))}
+      </tr>
+    </thead>
+  )
+
+  const renderLibraryColumnGroup = () => (
+    <colgroup>
+      {libraryTableColumns.map((column) => (
+        <col key={column.key} style={{ width: libraryColumnWidths[column.key] }} />
+      ))}
+    </colgroup>
+  )
+
+  const renderLibraryTableHeader = () => (
+    <thead>
+      <tr>
+        {libraryTableColumns.map((column) => (
+          <th key={column.key}>
+            {column.label}
+            <span
+              aria-label={`调整${column.label}列宽`}
+              aria-orientation="vertical"
+              aria-valuemax={column.maxWidth}
+              aria-valuemin={column.minWidth}
+              aria-valuenow={libraryColumnWidths[column.key]}
+              aria-valuetext={`${libraryColumnWidths[column.key]} 像素`}
+              className={`library-column-resizer ${resizingLibraryColumn === column.key ? 'active' : ''}`}
+              onDoubleClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                setLibraryColumnWidth(column, column.defaultWidth)
+              }}
+              onKeyDown={(event) => handleLibraryColumnResizeKey(event, column)}
+              onLostPointerCapture={() => {
+                if (libraryColumnDragRef.current?.key !== column.key) return
+                libraryColumnDragRef.current = null
+                setResizingLibraryColumn(null)
+              }}
+              onPointerCancel={stopLibraryColumnResize}
+              onPointerDown={(event) => startLibraryColumnResize(event, column)}
+              onPointerMove={(event) => moveLibraryColumnResize(event, column)}
+              onPointerUp={stopLibraryColumnResize}
+              role="separator"
+              tabIndex={0}
+              title="拖动调整列宽；双击恢复默认宽度"
+            />
+          </th>
+        ))}
+      </tr>
+    </thead>
+  )
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="brand-block">
+          <span className="brand-mark"><Layers3 size={18} strokeWidth={2.2} /></span>
+          <div>
+            <strong>FABVIEW</strong>
+            <span>Gerber 3D</span>
+          </div>
+        </div>
+
+        <div className="project-summary" aria-live="polite">
+          <strong>{board?.name ?? '未载入项目'}</strong>
+          {board && (
+            <span>{board.widthMm.toFixed(2)} × {board.heightMm.toFixed(2)} mm · {board.layers.length} 个图层</span>
+          )}
+        </div>
+
+        <div className="topbar-actions">
+          <div className="view-segment" aria-label="视图方向">
+            <button
+              className={cameraPreset === 'iso' ? 'active' : ''}
+              onClick={() => choosePreset('iso')}
+              title="等轴视图"
+              aria-label="等轴视图"
+            >
+              <Cuboid size={17} />
+              <span>3D</span>
+            </button>
+            <button
+              className={cameraPreset === 'top' ? 'active' : ''}
+              onClick={() => choosePreset('top')}
+              title="顶层视图"
+              aria-label="顶层视图"
+            >
+              <ArrowUpToLine size={17} />
+              <span>顶面</span>
+            </button>
+            <button
+              className={cameraPreset === 'bottom' ? 'active' : ''}
+              onClick={() => choosePreset('bottom')}
+              title="底层视图"
+              aria-label="底层视图"
+            >
+              <ArrowDownToLine size={17} />
+              <span>底面</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <aside className="sidebar">
+        <section className="sidebar-section import-section">
+          <div className="section-heading">
+            <span>生产文件</span>
+            <span className="count-badge">{importReadyCount}/3</span>
+          </div>
+          <div className="import-list">
+            <div
+              className={`import-target gerber ${draggingImport === 'gerber' ? 'dragging' : ''} ${board ? 'ready' : ''}`}
+              onDragEnter={(event) => {
+                event.preventDefault()
+                setDraggingImport('gerber')
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={(event) => {
+                if (event.currentTarget === event.target) setDraggingImport(null)
+              }}
+              onDrop={(event) => {
+                event.preventDefault()
+                handleImportDrop('gerber', Array.from(event.dataTransfer.files))
+              }}
+            >
+              <FileArchive size={20} />
+              <div>
+                <strong>Gerber</strong>
+                <span title={gerberImportName}>{board ? `${gerberImportName} · ${board.sources.length} 个文件` : 'ZIP / Gerber'}</span>
+              </div>
+              <button onClick={() => gerberInputRef.current?.click()} title="导入 Gerber" aria-label="导入 Gerber">
+                <FolderOpen size={16} />
+              </button>
+            </div>
+
+            <div
+              className={`import-target bom ${draggingImport === 'bom' ? 'dragging' : ''} ${bomFile ? 'ready' : ''}`}
+              onDragEnter={(event) => {
+                event.preventDefault()
+                setDraggingImport('bom')
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={(event) => {
+                if (event.currentTarget === event.target) setDraggingImport(null)
+              }}
+              onDrop={(event) => {
+                event.preventDefault()
+                handleImportDrop('bom', Array.from(event.dataTransfer.files))
+              }}
+            >
+              <FileSpreadsheet size={20} />
+              <div>
+                <strong>BOM</strong>
+                <span title={bomFile?.name}>{bomFile ? `${bomFile.name} · ${formatBytes(bomFile.size)}` : 'XLSX / XLS / CSV / TSV'}</span>
+              </div>
+              <button onClick={() => bomInputRef.current?.click()} title="导入 BOM" aria-label="导入 BOM">
+                {auxiliaryLoading === 'bom' ? <LoaderCircle className="spin" size={16} /> : <FolderOpen size={16} />}
+              </button>
+            </div>
+
+            <div
+              className={`import-target placement ${draggingImport === 'placement' ? 'dragging' : ''} ${placementFile ? 'ready' : ''}`}
+              onDragEnter={(event) => {
+                event.preventDefault()
+                setDraggingImport('placement')
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={(event) => {
+                if (event.currentTarget === event.target) setDraggingImport(null)
+              }}
+              onDrop={(event) => {
+                event.preventDefault()
+                handleImportDrop('placement', Array.from(event.dataTransfer.files))
+              }}
+            >
+              <MapPin size={20} />
+              <div>
+                <strong>坐标</strong>
+                <span title={placementFile?.name}>{placementFile ? `${placementFile.name} · ${formatBytes(placementFile.size)}` : 'XLSX / CSV / TXT / POS'}</span>
+              </div>
+              <button onClick={() => placementInputRef.current?.click()} title="导入坐标文件" aria-label="导入坐标文件">
+                {auxiliaryLoading === 'placement' ? <LoaderCircle className="spin" size={16} /> : <FolderOpen size={16} />}
+              </button>
+            </div>
+          </div>
+
+          <input
+            ref={gerberInputRef}
+            type="file"
+            hidden
+            multiple
+            onChange={(event) => {
+              void handleGerberFiles(Array.from(event.target.files ?? []))
+              event.target.value = ''
+            }}
+          />
+          <input
+            ref={bomInputRef}
+            type="file"
+            hidden
+            accept=".xlsx,.xls,.csv,.tsv"
+            onChange={(event) => {
+              void handleAuxiliaryFile('bom', event.target.files?.[0])
+              event.target.value = ''
+            }}
+          />
+          <input
+            ref={placementInputRef}
+            type="file"
+            hidden
+            accept=".xlsx,.xls,.csv,.tsv,.txt,.pos"
+            onChange={(event) => {
+              void handleAuxiliaryFile('placement', event.target.files?.[0])
+              event.target.value = ''
+            }}
+          />
+        </section>
+
+        <section className="sidebar-section library-section">
+          <div className="section-heading">
+            <span>元件库</span>
+            <span className="count-badge">{componentLibraryData?.items.length ?? 0}</span>
+          </div>
+          <div className="import-list">
+            <div
+              className={`import-target library ${componentLibraryFile ? 'ready' : ''}`}
+            >
+              <Database size={20} />
+              <div>
+                <strong>物料数据</strong>
+                <span
+                  title={[
+                    componentLibraryFile?.name,
+                    ...(componentLibraryData?.warnings ?? []),
+                  ].filter(Boolean).join(' · ')}
+                >
+                  {componentLibraryFile && componentLibraryData
+                    ? `${componentLibraryFile.name} · ${componentLibraryData.items.length} 条`
+                    : 'XLSX / XLS / CSV / TSV'}
+                </span>
+              </div>
+              <button
+                onClick={() => setComponentLibraryPageOpen(true)}
+                title="打开元件库"
+                aria-label="打开元件库"
+              >
+                <Database size={16} />
+              </button>
+            </div>
+          </div>
+          <input
+            ref={componentLibraryInputRef}
+            type="file"
+            hidden
+            accept=".xlsx,.xls,.csv,.tsv"
+            onChange={(event) => {
+              void handleAuxiliaryFile('library', event.target.files?.[0])
+              event.target.value = ''
+            }}
+          />
+          <input
+            ref={manualModelInputRef}
+            type="file"
+            hidden
+            accept=".step,.stp,.glb"
+            onChange={(event) => {
+              void handleManualModelFile(event.target.files?.[0])
+              event.target.value = ''
+            }}
+          />
+        </section>
+
+        <section className="sidebar-section">
+          <div className="section-heading">
+            <span>显示</span>
+            <span className="count-badge">{Object.values(visibility).filter(Boolean).length}/{visibilityLabels.length}</span>
+          </div>
+          <div className="visibility-list">
+            {visibilityLabels.map((item) => (
+              <label key={item.key} className="toggle-row">
+                <span className="layer-dot" style={{ backgroundColor: item.color }} />
+                <span>{item.label}</span>
+                <input
+                  type="checkbox"
+                  checked={visibility[item.key]}
+                  onChange={() => toggleVisibility(item.key)}
+                />
+                <span className="toggle-track" aria-hidden="true"><span /></span>
+              </label>
+            ))}
+          </div>
+        </section>
+
+        <section className="sidebar-section">
+          <div className="section-heading"><span>板参数</span></div>
+          {board && profileCandidates.length > 0 && (
+            <label className="select-field">
+              <span>板框来源</span>
+              <select
+                value={board.profileLayerId}
+                disabled={profileCandidates.length === 1}
+                onChange={(event) => {
+                  setBoard((current) => current ? selectBoardProfile(current, event.target.value) : current)
+                  setCameraRevision((revision) => revision + 1)
+                }}
+              >
+                {profileCandidates.map((layer) => (
+                  <option key={layer.id} value={layer.id}>{layer.name} · {layer.roleName}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="range-field">
+            <span>板厚</span>
+            <output>{thickness.toFixed(1)} mm</output>
+            <input
+              type="range"
+              min="0.6"
+              max="3.2"
+              step="0.1"
+              value={thickness}
+              onChange={(event) => setThickness(Number(event.target.value))}
+            />
+          </label>
+          <div className="color-field">
+            <span>阻焊颜色</span>
+            <div className="color-swatches">
+              {colorOptions.map((option) => (
+                <button
+                  key={option.value}
+                  className={boardColor === option.value ? 'selected' : ''}
+                  style={{ '--swatch': option.value } as React.CSSProperties}
+                  onClick={() => setBoardColor(option.value)}
+                  title={option.name}
+                  aria-label={option.name}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="sidebar-section layers-section">
+          <div className="section-heading">
+            <span>源文件</span>
+            <span className="count-badge">{board?.sources.length ?? 0}</span>
+          </div>
+          <div className="source-list">
+            {board?.layers.map((layer) => (
+              <div className={`source-row ${layer.id === board.profileLayerId ? 'profile-source' : ''}`} key={layer.id}>
+                <span className={`file-status type-${layer.type}`} />
+                <div>
+                  <strong title={layer.name}>{layer.name}</strong>
+                  <span>
+                    {layerNames[layer.side ?? ''] ? `${layerNames[layer.side ?? '']} · ` : ''}
+                    {layer.roleName}
+                  </span>
+                </div>
+                <span>{formatBytes(board.sources.find((source) => source.name === layer.name)?.size ?? 0)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {board && board.issues.length > 0 && (
+          <section className="sidebar-section issue-section">
+            <div className="section-heading">
+              <span>解析提示</span>
+              <span className="count-badge">{board.issues.length}</span>
+            </div>
+            <div className="issue-list">
+              {board.issues.map((issue, index) => (
+                <div className={`issue-row ${issue.level}`} key={`${issue.file ?? 'board'}-${index}`}>
+                  <AlertTriangle size={14} />
+                  <div>
+                    {issue.file && <strong>{issue.file}</strong>}
+                    <span>{issue.message}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section className="data-note">
+          <Info size={16} />
+          <span>仅显示已通过数据库核对且具有 STEP 封装的元件。</span>
+        </section>
+      </aside>
+
+      <div className={`content-area ${bomData ? 'with-bom' : ''}`}>
+        {bomData && (
+          <section className="bom-panel" aria-label="BOM 器件确认">
+            <header className="bom-panel-header">
+              <div className="bom-panel-title">
+                <div>
+                  <strong>BOM 器件确认</strong>
+                  <span className="count-badge">{bomData.items.length} 种</span>
+                </div>
+                <span title={bomFile?.name}>{bomFile?.name}</span>
+              </div>
+              <div className={`bom-confirmation-summary ${confirmedBomCount === bomData.items.length ? 'complete' : ''}`}>
+                <CheckCircle2 size={17} />
+                <span>已确认</span>
+                <strong>{confirmedBomCount}/{bomData.items.length}</strong>
+              </div>
+            </header>
+
+            <div className="bom-toolbar">
+              <div className="bom-summary">
+                <span>{bomComponentCount} 件</span>
+                <span
+                  className={placementAlignment?.status === 'aligned' ? 'aligned' : placementData ? 'partial' : ''}
+                  title={placementAlignment
+                    ? `${placementAlignment.methodLabel}；${placementAlignment.insideCount}/${placementAlignment.totalCount} 个坐标中心位于板框内`
+                    : undefined}
+                >
+                  {placementAlignment?.status === 'aligned'
+                    ? `坐标已对齐 ${placementAlignment.insideCount}/${placementAlignment.totalCount}`
+                    : placementData ? `坐标 ${matchedDesignatorCount}/${bomDesignatorCount}` : '待导入坐标'}
+                </span>
+                <span
+                  className={bomLibraryMatches.size === (sourceBomData?.items.length ?? 0) ? 'aligned' : 'partial'}
+                  title={`数据库按规格与封装核对；footprint 中有 ${footprintSources.length} 个 STEP 映射`}
+                >
+                  数据库 {bomLibraryMatches.size}/{sourceBomData?.items.length ?? 0} · STEP {footprintSourceMatches.size}/{bomData.items.length}
+                </span>
+              </div>
+              <label className="bom-search">
+                <Search size={14} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={bomQuery}
+                  onChange={(event) => setBomQuery(event.target.value)}
+                  placeholder="搜索编码、物料名称、规格、名称或位号"
+                  aria-label="搜索 BOM"
+                />
+              </label>
+            </div>
+
+            <div className="bom-table-section-label checking">核对元件</div>
+
+            <div
+              className={`bom-table-wrap ${resizingBomColumn ? 'resizing-columns' : ''}`}
+              ref={bomTableWrapRef}
+            >
+              <table className="bom-table" style={{ width: bomTableWidth }}>
+                {renderBomColumnGroup()}
+                {renderBomTableHeader()}
+                <tbody>
+                  {filteredBomItems.map((item) => {
+                    const isConfirmed = confirmedBomIds.has(item.id)
+                    const isSelected = selectedBomId === item.id
+                    const details = [
+                      item.sku,
+                      item.materialName,
+                      item.partNumber,
+                      item.value,
+                      item.footprint,
+                      item.manufacturer,
+                      item.description,
+                    ].filter(Boolean).join(' · ')
+                    return (
+                      <tr
+                        aria-selected={isSelected}
+                        className={[isConfirmed ? 'confirmed' : '', isSelected ? 'selected' : ''].filter(Boolean).join(' ')}
+                        data-bom-id={item.id}
+                        key={item.id}
+                        onClick={(event) => {
+                          const target = event.target
+                          if (target instanceof Element && target.closest('button, input, a, select, textarea')) return
+                          toggleSelectedBomItem(item.id)
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return
+                          if (event.key !== 'Enter' && event.key !== ' ') return
+                          event.preventDefault()
+                          toggleSelectedBomItem(item.id)
+                        }}
+                        tabIndex={0}
+                      >
+                        <td className="bom-check-cell">
+                          <input
+                            type="checkbox"
+                            checked={isConfirmed}
+                            onChange={() => toggleBomConfirmation(item.id)}
+                            aria-label={`确认物料 ${bomPrimaryText(item)}`}
+                          />
+                        </td>
+                        <td className="bom-sku" title={item.sku}>
+                          {item.sku || '—'}
+                        </td>
+                        <td
+                          className="bom-name bom-editable-cell"
+                          title={item.materialName}
+                          onDoubleClick={(event) => {
+                            event.stopPropagation()
+                            startBomCellEdit(item, 'materialName')
+                          }}
+                        >
+                          {bomCellEdit?.itemId === item.id && bomCellEdit.field === 'materialName' ? (
+                            <input
+                              autoFocus
+                              aria-label={`修改 ${bomPrimaryText(item)} 的物料名称`}
+                              className="bom-inline-editor"
+                              onBlur={() => saveBomCellEdit(bomCellEdit)}
+                              onChange={(event) => setBomCellEdit({ ...bomCellEdit, value: event.target.value })}
+                              onFocus={(event) => event.currentTarget.select()}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault()
+                                  event.currentTarget.blur()
+                                } else if (event.key === 'Escape') {
+                                  event.preventDefault()
+                                  setBomCellEdit(null)
+                                }
+                              }}
+                              value={bomCellEdit.value}
+                            />
+                          ) : item.materialName || '—'}
+                        </td>
+                        <td
+                          className="bom-spec bom-editable-cell"
+                          title={details}
+                          onDoubleClick={(event) => {
+                            event.stopPropagation()
+                            startBomCellEdit(item, 'spec')
+                          }}
+                        >
+                          {bomCellEdit?.itemId === item.id && bomCellEdit.field === 'spec' ? (
+                            <input
+                              autoFocus
+                              aria-label={`修改 ${bomPrimaryText(item)} 的规格`}
+                              className="bom-inline-editor"
+                              onBlur={() => saveBomCellEdit(bomCellEdit)}
+                              onChange={(event) => setBomCellEdit({ ...bomCellEdit, value: event.target.value })}
+                              onFocus={(event) => event.currentTarget.select()}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault()
+                                  event.currentTarget.blur()
+                                } else if (event.key === 'Escape') {
+                                  event.preventDefault()
+                                  setBomCellEdit(null)
+                                }
+                              }}
+                              value={bomCellEdit.value}
+                            />
+                          ) : <strong>{item.value || item.partNumber || '—'}</strong>}
+                        </td>
+                        <td className="bom-description" title={item.description}>
+                          {item.description || '—'}
+                        </td>
+                        <td className="bom-footprint" title={item.footprint}>{item.footprint || '—'}</td>
+                        <td className="bom-designators" title={item.designators.join(', ')}>
+                          {shortDesignators(item.designators)}
+                        </td>
+                        <td className="bom-quantity">{item.quantity}</td>
+                        <td className="bom-actions">
+                          <div className="bom-action-buttons">
+                            <button
+                              className="bom-action-button replace"
+                              type="button"
+                              onClick={() => setSelectedBomId(item.id)}
+                              title={`替换元件 ${bomPrimaryText(item)}`}
+                            >
+                              <RefreshCw size={12} />
+                              <span>替换元件</span>
+                            </button>
+                            <button
+                              className="bom-action-button delete"
+                              type="button"
+                              onClick={() => moveBomItemToPending(item)}
+                              title={`删除元件 ${bomPrimaryText(item)}`}
+                            >
+                              <Trash2 size={12} />
+                              <span>删除元件</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {filteredBomItems.length === 0 && (
+                    <tr>
+                      <td className="bom-empty" colSpan={9}>没有匹配的物料</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="bom-table-section-label pending">
+              <span>待处理元件</span>
+              <span className="pending-bom-count">{pendingBomItems.length}</span>
+            </div>
+
+            {pendingBomItems.length > 0 && (
+              <div
+                className={`bom-table-wrap pending-bom-table-wrap ${resizingBomColumn ? 'resizing-columns' : ''}`}
+                aria-label="待处理元件列表"
+              >
+                <table className="bom-table pending-bom-table" style={{ width: bomTableWidth }}>
+                  {renderBomColumnGroup()}
+                  {renderBomTableHeader()}
+                  <tbody>
+                    {pendingBomItems.map((entry) => {
+                      const item = entry.item
+                      const details = [
+                        item.sku,
+                        item.materialName,
+                        item.partNumber,
+                        item.value,
+                        item.footprint,
+                        item.manufacturer,
+                        item.description,
+                      ].filter(Boolean).join(' · ')
+                      return (
+                        <tr key={item.id}>
+                          <td className="bom-check-cell" aria-label="待处理元件" />
+                          <td className="bom-sku" title={item.sku}>{item.sku || '—'}</td>
+                          <td className="bom-name" title={item.materialName}>{item.materialName || '—'}</td>
+                          <td className="bom-spec" title={details}>
+                            <strong>{item.value || item.partNumber || '—'}</strong>
+                          </td>
+                          <td className="bom-description" title={item.description}>{item.description || '—'}</td>
+                          <td className="bom-footprint" title={item.footprint}>{item.footprint || '—'}</td>
+                          <td className="bom-designators" title={item.designators.join(', ')}>
+                            {shortDesignators(item.designators)}
+                          </td>
+                          <td className="bom-quantity">{item.quantity}</td>
+                          <td className="bom-actions">
+                            <div className="bom-action-buttons pending-actions">
+                              <button
+                                className="bom-action-button restore"
+                                type="button"
+                                onClick={() => restorePendingBomItem(entry)}
+                                title={`恢复元件 ${bomPrimaryText(item)}`}
+                              >
+                                <Undo2 size={12} />
+                                <span>恢复元件</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {bomData.warnings.length > 0 && (
+              <div className="bom-warning" title={bomData.warnings.join('；')}>
+                <AlertTriangle size={14} />
+                <span>{bomData.warnings[0]}</span>
+              </div>
+            )}
+          </section>
+        )}
+
+        <section className="workspace" aria-label="PCB 3D 视图">
+          <PcbViewer
+            board={board}
+            thickness={thickness}
+            boardColor={boardColor}
+            visibility={visibility}
+            cameraPreset={cameraPreset}
+            cameraRevision={cameraRevision}
+            alignment={placementAlignment}
+            bomItems={pcbBomItems}
+            selectedDesignators={selectedDesignators}
+            onComponentSelect={selectBomItemByDesignator}
+          />
+
+          {loading.active && (
+            <div className="processing-overlay" role="status">
+              <LoaderCircle className="spin" size={24} />
+              <strong>正在构建 PCB</strong>
+              <span title={loading.file}>{loading.file}</span>
+              <div className="progress-track"><span style={{ width: `${loading.progress}%` }} /></div>
+            </div>
+          )}
+
+          {error && (
+            <div className="error-banner" role="alert">
+              <AlertTriangle size={18} />
+              <span>{error}</span>
+              <button onClick={() => setError(null)} title="关闭" aria-label="关闭"><X size={16} /></button>
+            </div>
+          )}
+
+          {board && !loading.active && (
+            <div className="render-status">
+              {board.issues.some((issue) => issue.level === 'error') ? (
+                <AlertTriangle size={15} />
+              ) : (
+                <CheckCircle2 size={15} />
+              )}
+              <span>{board.hasOutline ? '板框已识别' : '使用外接矩形板框'}</span>
+            </div>
+          )}
+
+          {placementAlignment && !loading.active && (
+            <div
+              className={`placement-status ${placementAlignment.status}`}
+              title={[
+                placementAlignment.methodLabel,
+                `偏移 X ${placementAlignment.offsetXmm.toFixed(3)} mm，Y ${placementAlignment.offsetYmm.toFixed(3)} mm`,
+                ...placementAlignment.placements
+                  .filter((placement) => !placement.isInsideBoard)
+                  .slice(0, 6)
+                  .map((placement) => `板框外 ${placement.designator}: (${placement.boardXmm.toFixed(3)}, ${placement.boardYmm.toFixed(3)}) mm`),
+              ].join('；')}
+            >
+              {placementAlignment.status === 'aligned' ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+              <span>
+                {placementAlignment.status === 'aligned'
+                  ? `坐标已自动对齐 · ${placementAlignment.insideCount}/${placementAlignment.totalCount} 在板内`
+                  : placementAlignment.status === 'estimated'
+                    ? `坐标为估算对齐 · ${placementAlignment.insideCount}/${placementAlignment.totalCount} 在板内`
+                    : `坐标超出板框 · ${placementAlignment.insideCount}/${placementAlignment.totalCount} 在板内`}
+              </span>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <footer className="statusbar">
+        <span>{board ? `${board.sources.length} 个文件 · ${formatBytes(board.sources.reduce((sum, file) => sum + file.size, 0))}` : '无数据'}</span>
+        <span>{board?.issues.length ? `${board.issues.length} 条解析提示` : '解析正常'}</span>
+        <span>WebGL</span>
+      </footer>
+
+      {componentLibraryPageOpen && (
+        <section className="library-page" role="dialog" aria-modal="true" aria-label="元件库导入">
+          <header className="library-page-header">
+            <div className="library-page-title">
+              <span className="library-page-mark"><Database size={19} /></span>
+              <div>
+                <strong>元件库导入</strong>
+                <span>{componentLibraryFile?.name ?? '尚未载入元件库文件'}</span>
+              </div>
+            </div>
+            <button className="library-back-button" type="button" onClick={closeComponentLibraryPage}>
+              <ArrowLeft size={16} />
+              <span>返回 PCB</span>
+            </button>
+          </header>
+
+          <div className="library-page-body">
+            <aside className="library-import-pane">
+              <div className="library-pane-heading">
+                <span>数据来源</span>
+                <span className="count-badge">{componentLibraryData?.items.length ?? 0}</span>
+              </div>
+              <div
+                className={`library-drop-zone ${draggingImport === 'library' ? 'dragging' : ''} ${componentLibraryFile ? 'ready' : ''}`}
+                onDragEnter={(event) => {
+                  event.preventDefault()
+                  setDraggingImport('library')
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDragLeave={(event) => {
+                  if (event.currentTarget === event.target) setDraggingImport(null)
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  handleImportDrop('library', Array.from(event.dataTransfer.files))
+                }}
+              >
+                {auxiliaryLoading === 'library'
+                  ? <LoaderCircle className="spin" size={28} />
+                  : <Upload size={28} />}
+                <strong>{componentLibraryFile ? '替换元件库文件' : '导入元件库文件'}</strong>
+                <span>XLSX、XLS、CSV 或 TSV</span>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={auxiliaryLoading === 'library'}
+                  onClick={() => componentLibraryInputRef.current?.click()}
+                >
+                  <FolderOpen size={15} />
+                  <span>选择文件</span>
+                </button>
+              </div>
+
+              {componentLibraryFile && componentLibraryData && (
+                <div className="library-file-details">
+                  <div>
+                    <span>当前文件</span>
+                    <strong title={componentLibraryFile.name}>{componentLibraryFile.name}</strong>
+                  </div>
+                  <dl>
+                    <div><dt>工作表</dt><dd>{componentLibraryData.sheetName}</dd></div>
+                    <div><dt>源数据</dt><dd>{componentLibraryData.sourceRows} 行</dd></div>
+                    <div><dt>有效物料</dt><dd>{componentLibraryData.items.length} 条</dd></div>
+                    <div><dt>文件大小</dt><dd>{formatBytes(componentLibraryFile.size)}</dd></div>
+                  </dl>
+                </div>
+              )}
+
+              {componentLibraryData && componentLibraryData.warnings.length > 0 && (
+                <div className="library-warning-list">
+                  {componentLibraryData.warnings.map((warning) => (
+                    <div key={warning}><AlertTriangle size={14} /><span>{warning}</span></div>
+                  ))}
+                </div>
+              )}
+
+              <FootprintModelBrowser
+                models={libraryPreviewModels}
+                selectedModelPath={selectedLibraryModelPath}
+                onSelectedModelPathChange={setSelectedLibraryModelPath}
+              />
+            </aside>
+
+            <section className="library-data-pane" aria-label="元件库物料数据">
+              <header className="library-data-toolbar">
+                <div>
+                  <strong>物料数据</strong>
+                  <span>
+                    {componentLibraryData
+                      ? `显示 ${filteredComponentLibraryItems.length} / ${componentLibraryData.items.length} 条${componentLibraryFieldFilter ? ` · ${componentLibraryFieldFilter}` : ''}`
+                      : '等待导入'}
+                  </span>
+                </div>
+                <label className="library-search">
+                  <Search size={15} />
+                  <input
+                    type="search"
+                    value={componentLibraryQuery}
+                    disabled={!componentLibraryData}
+                    onChange={(event) => setComponentLibraryQuery(event.target.value)}
+                    placeholder="搜索编码、名称或规格"
+                    aria-label="搜索元件库"
+                  />
+                </label>
+              </header>
+
+              <div className="library-data-body">
+                {componentLibraryData && (
+                  <nav className="library-field-nav" aria-label="字段导航">
+                    <div className="library-field-nav-heading">
+                      <span>字段导航</span>
+                      <span>{componentLibraryFields.length}</span>
+                    </div>
+                    <button
+                      className={componentLibraryFieldFilter === null ? 'active' : ''}
+                      type="button"
+                      onClick={() => setComponentLibraryFieldFilter(null)}
+                      aria-pressed={componentLibraryFieldFilter === null}
+                    >
+                      <span>全部</span>
+                      <strong>{componentLibraryData.items.length}</strong>
+                    </button>
+                    {componentLibraryFields.map(({ field, count }) => (
+                      <button
+                        className={componentLibraryFieldFilter === field ? 'active' : ''}
+                        type="button"
+                        key={field}
+                        onClick={() => setComponentLibraryFieldFilter(field)}
+                        aria-label={`筛选字段 ${field}，${count} 条`}
+                        aria-pressed={componentLibraryFieldFilter === field}
+                      >
+                        <span title={field}>{field}</span>
+                        <strong>{count}</strong>
+                      </button>
+                    ))}
+                  </nav>
+                )}
+
+                <div className={`library-table-wrap ${resizingLibraryColumn ? 'resizing-columns' : ''}`}>
+                  {componentLibraryData ? (
+                    <table className="library-table" style={{ width: libraryTableWidth }}>
+                      {renderLibraryColumnGroup()}
+                      {renderLibraryTableHeader()}
+                      <tbody>
+                        {filteredComponentLibraryItems.map((item) => {
+                          const manualModel = manualLibraryModels.get(item.id)
+                          const automaticMatch = componentLibraryFootprintMatches.get(item.id)
+                          const previewModel = manualModel ?? automaticMatch?.model
+                          const modelTitle = manualModel
+                            ? `手动绑定：${manualModel.name}`
+                            : automaticMatch
+                              ? `${automaticMatch.forced ? '强绑定' : '自动匹配'}：${automaticMatch.packageName} → ${automaticMatch.source.file}`
+                              : '未匹配到实际3D封装'
+                          return (
+                            <tr
+                              key={item.id}
+                              className={selectedLibraryItemId === item.id ? 'selected' : ''}
+                              aria-selected={selectedLibraryItemId === item.id}
+                              onClick={() => selectComponentLibraryItem(item.id)}
+                            >
+                              <td className="library-sku" title={item.sku}>{item.sku || '—'}</td>
+                              <td className="library-name" title={componentLibraryDisplayName(item.materialName)}>
+                                {componentLibraryDisplayName(item.materialName) || '—'}
+                              </td>
+                              <td>{item.dataStatus || '—'}</td>
+                              <td>{item.disabledStatus || '—'}</td>
+                              <td>{item.unit || '—'}</td>
+                              <td>{item.used || '—'}</td>
+                              <td className="library-model-cell" title={modelTitle}>
+                                {previewModel ? (
+                                  <span className="library-model-status"><CheckCircle2 size={13} />是</span>
+                                ) : (
+                                  <button
+                                    className="library-model-import-button"
+                                    type="button"
+                                    disabled={manualModelLoadingId === item.id}
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      openManualModelImport(item.id)
+                                    }}
+                                  >
+                                    {manualModelLoadingId === item.id
+                                      ? <LoaderCircle className="spin" size={13} />
+                                      : <Upload size={13} />}
+                                    <span>{manualModelLoadingId === item.id ? '解析中' : '手动导入'}</span>
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                        {filteredComponentLibraryItems.length === 0 && (
+                          <tr><td className="library-table-empty" colSpan={7}>没有匹配的物料</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="library-empty-state">
+                      <Database size={34} />
+                      <strong>尚未导入元件库</strong>
+                      <span>选择左侧文件后将在这里显示物料数据</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+          </div>
+
+          {error && (
+            <div className="error-banner library-page-error" role="alert">
+              <AlertTriangle size={18} />
+              <span>{error}</span>
+              <button onClick={() => setError(null)} title="关闭" aria-label="关闭"><X size={16} /></button>
+            </div>
+          )}
+        </section>
+      )}
+    </main>
+  )
+}
+
+export default App

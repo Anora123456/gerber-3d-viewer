@@ -1,0 +1,360 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-17T21:59:35.6043619+08:00",
+  "sourceRoot": "D:\\Program Files\\KiCad\\10.0\\share\\kicad\\3dmodels",
+  "copiedCount": 38,
+  "unresolvedCount": 1,
+  "entries": [
+    {
+      "alias": "C 0402_L",
+      "category": "passive/capacitor",
+      "file": "passive/capacitor/C_0402_L.step",
+      "source": "Capacitor_SMD.3dshapes\\C_0402_1005Metric.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "0402 imperial / 1005 metric"
+    },
+    {
+      "alias": "C 0603_L",
+      "category": "passive/capacitor",
+      "file": "passive/capacitor/C_0603_L.step",
+      "source": "Capacitor_SMD.3dshapes\\C_0603_1608Metric.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "0603 imperial / 1608 metric"
+    },
+    {
+      "alias": "C 0805_L",
+      "category": "passive/capacitor",
+      "file": "passive/capacitor/C_0805_L.step",
+      "source": "Capacitor_SMD.3dshapes\\C_0805_2012Metric.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "0805 imperial / 2012 metric"
+    },
+    {
+      "alias": "C 1206_L",
+      "category": "passive/capacitor",
+      "file": "passive/capacitor/C_1206_L.step",
+      "source": "Capacitor_SMD.3dshapes\\C_1206_3216Metric.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "1206 imperial / 3216 metric"
+    },
+    {
+      "alias": "CM D(6.3*5.4)",
+      "category": "passive/capacitor",
+      "file": "passive/capacitor/CM_D_6.3_5.4.step",
+      "source": "Capacitor_SMD.3dshapes\\C_Elec_6.3x5.4.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "6.3 x 5.4 mm aluminum electrolytic"
+    },
+    {
+      "alias": "R 0402_L",
+      "category": "passive/resistor",
+      "file": "passive/resistor/R_0402_L.step",
+      "source": "@destination\\User Library-R-1005-0402.STEP",
+      "confidence": "user",
+      "status": "copied",
+      "note": "User supplied 0402 resistor model"
+    },
+    {
+      "alias": "R 0805_L",
+      "category": "passive/resistor",
+      "file": "passive/resistor/R_0805_L.step",
+      "source": "Resistor_SMD.3dshapes\\R_0805_2012Metric.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "0805 imperial / 2012 metric"
+    },
+    {
+      "alias": "R 1206_L",
+      "category": "passive/resistor",
+      "file": "passive/resistor/R_1206_L.step",
+      "source": "Resistor_SMD.3dshapes\\R_1206_3216Metric.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "1206 imperial / 3216 metric"
+    },
+    {
+      "alias": "R 2512_L",
+      "category": "passive/resistor",
+      "file": "passive/resistor/R_2512_L.step",
+      "source": "Resistor_SMD.3dshapes\\R_2512_6332Metric.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "2512 imperial / 6332 metric"
+    },
+    {
+      "alias": "FU 1206",
+      "category": "passive/fuse",
+      "file": "passive/fuse/FU_1206.step",
+      "source": "Fuse.3dshapes\\Fuse_1206_3216Metric.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "1206 fuse"
+    },
+    {
+      "alias": "LED 0402G",
+      "category": "opto/led",
+      "file": "opto/led/LED_0402G.step",
+      "source": "LED_SMD.3dshapes\\LED_0402_1005Metric.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "Generic 0402 LED geometry"
+    },
+    {
+      "alias": "LED 0402R",
+      "category": "opto/led",
+      "file": "opto/led/LED_0402R.step",
+      "source": "LED_SMD.3dshapes\\LED_0402_1005Metric.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "Generic 0402 LED geometry"
+    },
+    {
+      "alias": "DFN-8-3*3-EP",
+      "category": "semiconductor/ic",
+      "file": "semiconductor/ic/DFN-8-3_3-EP.step",
+      "source": "Package_DFN_QFN.3dshapes\\DFN-8-1EP_3x3mm_P0.65mm_EP1.5x2.25mm.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "3 x 3 mm DFN-8 with exposed pad"
+    },
+    {
+      "alias": "LQFP64_N",
+      "category": "semiconductor/ic",
+      "file": "semiconductor/ic/LQFP64_N.step",
+      "source": "Package_QFP.3dshapes\\LQFP-64_10x10mm_P0.5mm.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "STM32F103RE package"
+    },
+    {
+      "alias": "QFN20_3x3_EP",
+      "category": "semiconductor/ic",
+      "file": "semiconductor/ic/QFN20_3x3_EP.step",
+      "source": "Package_DFN_QFN.3dshapes\\UQFN-20-1EP_3x3mm_P0.4mm_EP1.85x1.85mm.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "3 x 3 mm QFN-20 with exposed pad"
+    },
+    {
+      "alias": "QFN24 4x4_N",
+      "category": "semiconductor/ic",
+      "file": "semiconductor/ic/QFN24_4x4_N.step",
+      "source": "Package_DFN_QFN.3dshapes\\QFN-24-1EP_4x4mm_P0.5mm_EP2.7x2.7mm.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "4 x 4 mm QFN-24 with exposed pad"
+    },
+    {
+      "alias": "QFN32 4X4",
+      "category": "semiconductor/ic",
+      "file": "semiconductor/ic/QFN32_4X4.step",
+      "source": "Package_DFN_QFN.3dshapes\\QFN-32-1EP_4x4mm_P0.4mm_EP2.9x2.9mm.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "4 x 4 mm QFN-32 with exposed pad"
+    },
+    {
+      "alias": "SC70-6",
+      "category": "semiconductor/ic",
+      "file": "semiconductor/ic/SC70-6.step",
+      "source": "Package_TO_SOT_SMD.3dshapes\\SOT-363_SC-70-6.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "SC-70-6 / SOT-363"
+    },
+    {
+      "alias": "SO-08",
+      "category": "semiconductor/ic",
+      "file": "semiconductor/ic/SO-08.step",
+      "source": "Package_SO.3dshapes\\SO-8_3.9x4.9mm_P1.27mm.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "Standard SO-8"
+    },
+    {
+      "alias": "SOT23-5L",
+      "category": "semiconductor/ic",
+      "file": "semiconductor/ic/SOT23-5L.step",
+      "source": "Package_TO_SOT_SMD.3dshapes\\SOT-23-5.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "SOT-23-5"
+    },
+    {
+      "alias": "SOT23-6",
+      "category": "semiconductor/ic",
+      "file": "semiconductor/ic/SOT23-6.step",
+      "source": "Package_TO_SOT_SMD.3dshapes\\SOT-23-6.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "SOT-23-6"
+    },
+    {
+      "alias": "SOD-123F",
+      "category": "semiconductor/diode",
+      "file": "semiconductor/diode/SOD-123F.step",
+      "source": "Diode_SMD.3dshapes\\D_SOD-123F.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "Flat lead SOD-123F"
+    },
+    {
+      "alias": "SOD-923",
+      "category": "semiconductor/diode",
+      "file": "semiconductor/diode/SOD-923.step",
+      "source": "Diode_SMD.3dshapes\\D_SOD-923.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "SOD-923"
+    },
+    {
+      "alias": "SOT23-3L",
+      "category": "semiconductor/transistor",
+      "file": "semiconductor/transistor/SOT23-3L.step",
+      "source": "Package_TO_SOT_SMD.3dshapes\\SOT-23-3.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "SOT-23-3 lead variant L"
+    },
+    {
+      "alias": "SOT23-3N",
+      "category": "semiconductor/transistor",
+      "file": "semiconductor/transistor/SOT23-3N.step",
+      "source": "Package_TO_SOT_SMD.3dshapes\\SOT-23-3.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "SOT-23-3 lead variant N"
+    },
+    {
+      "alias": "SOT-723",
+      "category": "semiconductor/transistor",
+      "file": null,
+      "source": "",
+      "confidence": "manual-needed",
+      "status": "manual-needed",
+      "note": "No reliable KiCad 10 model found"
+    },
+    {
+      "alias": "FXL0530-L",
+      "category": "electromechanical/inductor",
+      "file": "electromechanical/inductor/FXL0530-L.step",
+      "source": "Inductor_SMD.3dshapes\\L_Changjiang_FXL0530.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "Changjiang FXL0530"
+    },
+    {
+      "alias": "HC0420",
+      "category": "electromechanical/inductor",
+      "file": "electromechanical/inductor/HC0420.step",
+      "source": "Inductor_SMD.3dshapes\\L_APV_APH0420.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "4 x 4 x 2 mm molded inductor"
+    },
+    {
+      "alias": "SMD 13x13",
+      "category": "electromechanical/inductor",
+      "file": "electromechanical/inductor/SMD_13x13.step",
+      "source": "Inductor_SMD.3dshapes\\L_APV_APH1265.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "12.6 x 12.6 x 6.5 mm molded inductor"
+    },
+    {
+      "alias": "OSC 3225-4P",
+      "category": "electromechanical/crystal",
+      "file": "electromechanical/crystal/OSC_3225-4P.step",
+      "source": "Crystal.3dshapes\\Crystal_SMD_3225-4Pin_3.2x2.5mm.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "3225 four-pad crystal"
+    },
+    {
+      "alias": "MLT-8530",
+      "category": "electromechanical/buzzer",
+      "file": "electromechanical/buzzer/MLT-8530.step",
+      "source": "Buzzer_Beeper.3dshapes\\Buzzer_Murata_PKMCS0909E.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "Closest 9 x 9 mm SMD buzzer"
+    },
+    {
+      "alias": "TSW SMD-6*6*4.3",
+      "category": "electromechanical/switch",
+      "file": "electromechanical/switch/TSW_SMD-6_6_4.3.step",
+      "source": "Button_Switch_SMD.3dshapes\\SW_Push_1TS009xxxx-xxxx-xxxx_6x6x5mm.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "Closest 6 x 6 mm SMD push switch"
+    },
+    {
+      "alias": "BT2.0-M",
+      "category": "connector",
+      "file": "connector/BT2.0-M.step",
+      "source": "Connector_JST.3dshapes\\JST_PH_B2B-PH-K_1x02_P2.00mm_Vertical.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "2-pin 2.0 mm vertical battery connector"
+    },
+    {
+      "alias": "FPC0.5 2H-WS-12P",
+      "category": "connector",
+      "file": "connector/FPC0.5_2H-WS-12P.step",
+      "source": "Connector_FFC-FPC.3dshapes\\Hirose_FH12-12S-0.5SH_1x12-1MP_P0.50mm_Horizontal.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "12-pin 0.5 mm horizontal FPC connector"
+    },
+    {
+      "alias": "GCT-USB4105-XX-A_V",
+      "category": "connector",
+      "file": "connector/GCT-USB4105-XX-A_V.step",
+      "source": "Connector_USB.3dshapes\\USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "GCT USB4105 Type-C receptacle"
+    },
+    {
+      "alias": "HDR1.27-LI-4P",
+      "category": "connector",
+      "file": "connector/HDR1.27-LI-4P.step",
+      "source": "Connector_PinHeader_1.27mm.3dshapes\\PinHeader_1x04_P1.27mm_Vertical.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "Generic 1 x 4, 1.27 mm vertical header"
+    },
+    {
+      "alias": "JST-SM02B-SRSS-TB_V",
+      "category": "connector",
+      "file": "connector/JST-SM02B-SRSS-TB_V.step",
+      "source": "Connector_JST.3dshapes\\JST_SH_SM02B-SRSS-TB_1x02-1MP_P1.00mm_Horizontal.step",
+      "confidence": "exact",
+      "status": "copied",
+      "note": "JST SH SM02B-SRSS-TB"
+    },
+    {
+      "alias": "PH2.0-LI-2P + 1.6mm",
+      "category": "connector",
+      "file": "connector/PH2.0-LI-2P_1.6mm.step",
+      "source": "Connector_JST.3dshapes\\JST_PH_B2B-PH-K_1x02_P2.00mm_Vertical.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "2-pin 2.0 mm vertical header"
+    },
+    {
+      "alias": "M2_4.0x6.0_2.5x1.2",
+      "category": "mechanical",
+      "file": "mechanical/M2_4.0x6.0_2.5x1.2.step",
+      "source": "Mounting_Wuerth.3dshapes\\Mounting_Wuerth_WA-SMSI-M2_H6mm_9774060243.step",
+      "confidence": "compatible",
+      "status": "copied",
+      "note": "Closest M2 x 6 mm SMD spacer"
+    }
+  ]
+}
