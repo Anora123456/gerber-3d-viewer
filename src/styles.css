@@ -347,6 +347,14 @@ button {
   background: #1d302b;
 }
 
+.library-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.library-view-toggle,
 .library-back-button {
   display: inline-flex;
   height: 34px;
@@ -362,10 +370,257 @@ button {
   cursor: pointer;
 }
 
+.library-view-toggle {
+  border-color: #315e94;
+  color: #cfe1fb;
+  background: #1b3554;
+}
+
+.library-view-toggle:hover {
+  border-color: #4e80ba;
+  color: #ffffff;
+  background: #24486f;
+}
+
 .library-back-button:hover {
   border-color: #708078;
   color: #edf0ed;
   background: #303a32;
+}
+
+.kingdee-config-shell {
+  min-width: 0;
+  min-height: 0;
+  padding: 28px 40px 44px;
+  overflow-y: auto;
+  color: #182230;
+  background: #ffffff;
+}
+
+.kingdee-config-shell > * {
+  width: min(1080px, 100%);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.kingdee-config-brand {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 28px;
+}
+
+.kingdee-config-brand > span {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  color: #2672e8;
+  background: #eef5ff;
+}
+
+.kingdee-config-brand > div {
+  display: grid;
+  gap: 4px;
+}
+
+.kingdee-config-brand strong {
+  color: #121923;
+  font-size: 22px;
+}
+
+.kingdee-config-brand small {
+  color: #687994;
+  font-size: 12px;
+}
+
+.kingdee-config-form {
+  display: grid;
+  gap: 22px;
+}
+
+.kingdee-field-grid,
+.kingdee-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.kingdee-options-grid {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(280px, 1.25fr);
+  align-items: end;
+}
+
+.kingdee-field {
+  display: grid;
+  min-width: 0;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.kingdee-field > span,
+.kingdee-field > legend {
+  margin: 0;
+  padding: 0;
+  color: #52647e;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.kingdee-field input,
+.kingdee-field select {
+  width: 100%;
+  height: 50px;
+  padding: 0 14px;
+  border: 1px solid #cbd8ea;
+  border-radius: 7px;
+  outline: 0;
+  color: #2e3d54;
+  background: #ffffff;
+  font: inherit;
+  font-size: 15px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.kingdee-field input::placeholder {
+  color: #8b99ae;
+}
+
+.kingdee-field input:focus,
+.kingdee-field select:focus {
+  border-color: #2672e8;
+  box-shadow: 0 0 0 3px rgb(38 114 232 / 14%);
+}
+
+.kingdee-secret-control {
+  position: relative;
+}
+
+.kingdee-secret-control input {
+  padding-right: 48px;
+}
+
+.kingdee-secret-control button {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #64748b;
+  background: transparent;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.kingdee-secret-control button:hover {
+  color: #155ac2;
+  background: #eef5ff;
+}
+
+.kingdee-protocol-field {
+  align-self: end;
+}
+
+.kingdee-segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: 50px;
+  padding: 4px;
+  border: 1px solid #cbd8ea;
+  border-radius: 7px;
+  background: #f3f6fa;
+}
+
+.kingdee-segmented button {
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  color: #687994;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.kingdee-segmented button.active {
+  color: #155ac2;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgb(16 24 40 / 12%);
+}
+
+.kingdee-form-actions {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding-top: 4px;
+  border-top: 1px solid #edf1f6;
+}
+
+.kingdee-form-actions output {
+  color: #687994;
+  font-size: 12px;
+}
+
+.kingdee-form-actions output.error {
+  color: #b42318;
+}
+
+.kingdee-form-actions > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 9px;
+}
+
+.kingdee-button {
+  display: inline-flex;
+  min-width: 124px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 15px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.kingdee-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.kingdee-button.secondary {
+  border-color: #cbd8ea;
+  color: #36506f;
+  background: #ffffff;
+}
+
+.kingdee-button.primary {
+  color: #ffffff;
+  background: #2672e8;
+}
+
+.kingdee-button:hover:not(:disabled) {
+  border-color: #9db4d1;
+}
+
+.kingdee-button.primary:hover:not(:disabled) {
+  background: #155ac2;
 }
 
 .library-page-body {
@@ -437,6 +692,40 @@ button {
 .library-drop-zone .primary-button:disabled {
   cursor: wait;
   opacity: 0.7;
+}
+
+.kingdee-sync-panel {
+  display: grid;
+  min-height: 176px;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  padding: 18px;
+  border: 1px solid #3d4c44;
+  border-radius: 6px;
+  color: #78b1a7;
+  background: #1b221d;
+  text-align: center;
+}
+
+.kingdee-sync-panel.ready {
+  border-color: #37695f;
+  color: #8cc4ba;
+  background: #192923;
+}
+
+.kingdee-sync-panel > strong {
+  color: #e4e9e5;
+  font-size: 12px;
+}
+
+.kingdee-sync-panel > span {
+  color: #849189;
+  font-size: 10px;
+}
+
+.kingdee-sync-panel .primary-button {
+  margin-top: 6px;
 }
 
 .library-file-details {
@@ -2473,6 +2762,60 @@ button {
   }
 
   .library-search {
+    width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .kingdee-config-shell {
+    padding: 22px 18px 36px;
+  }
+
+  .kingdee-config-brand {
+    margin-bottom: 22px;
+  }
+
+  .kingdee-field-grid,
+  .kingdee-options-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .kingdee-config-form {
+    gap: 18px;
+  }
+
+  .kingdee-form-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .kingdee-form-actions > div {
+    width: 100%;
+  }
+
+  .kingdee-button {
+    min-width: 0;
+    flex: 1;
+  }
+}
+
+@media (max-width: 430px) {
+  .library-view-toggle span {
+    display: none;
+  }
+
+  .library-view-toggle {
+    width: 34px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .kingdee-form-actions > div {
+    flex-direction: column-reverse;
+  }
+
+  .kingdee-button {
     width: 100%;
   }
 }

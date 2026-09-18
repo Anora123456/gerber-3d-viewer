@@ -15,6 +15,7 @@ vite.config.d.ts
 .env
 .env.*
 !.env.example
+/server/config.json
 *.local
 *.log
 npm-debug.log*

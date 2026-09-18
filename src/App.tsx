@@ -12,6 +12,7 @@ import {
   ArrowDownToLine,
   ArrowUpToLine,
   CheckCircle2,
+  CloudDownload,
   Cuboid,
   Database,
   FileArchive,
@@ -36,9 +37,9 @@ import PcbViewer, {
   type PackageOrientation,
 } from './PcbViewer'
 import FootprintModelBrowser, { type PreviewFootprintModel } from './FootprintModelBrowser'
+import KingdeeConnectionPanel from './KingdeeConnectionPanel'
 import {
   parseBomFile,
-  parseComponentLibraryFile,
   parsePlacementFile,
   type BomItem,
   type ComponentLibraryItem,
@@ -69,6 +70,7 @@ import {
 import { alignPlacements } from './placement-alignment'
 import { createSampleSources } from './sample-board'
 import { disposeObject3D, parsePreviewModelFile } from './step-model'
+import { syncKingdeeComponentLibrary } from './kingdee-api'
 
 const colorOptions = [
   { name: '绿色阻焊', value: '#11734a' },
@@ -199,7 +201,6 @@ function App() {
   const bomInputRef = useRef<HTMLInputElement>(null)
   const bomTableWrapRef = useRef<HTMLDivElement | null>(null)
   const placementInputRef = useRef<HTMLInputElement>(null)
-  const componentLibraryInputRef = useRef<HTMLInputElement>(null)
   const manualModelInputRef = useRef<HTMLInputElement>(null)
   const [board, setBoard] = useState<ParsedBoard | null>(null)
   const [gerberImportName, setGerberImportName] = useState('内置示例')
@@ -211,9 +212,11 @@ function App() {
     () => new Map(),
   )
   const [placementData, setPlacementData] = useState<ParsedPlacementFile | null>(null)
-  const [componentLibraryFile, setComponentLibraryFile] = useState<File | null>(null)
   const [componentLibraryData, setComponentLibraryData] = useState<ParsedComponentLibraryFile | null>(null)
   const [componentLibraryPageOpen, setComponentLibraryPageOpen] = useState(false)
+  const [componentLibraryPageView, setComponentLibraryPageView] = useState<'connection' | 'materials'>('connection')
+  const [kingdeeSyncing, setKingdeeSyncing] = useState(false)
+  const [kingdeeLastSync, setKingdeeLastSync] = useState<Date | null>(null)
   const [componentLibraryQuery, setComponentLibraryQuery] = useState('')
   const [componentLibraryFieldFilter, setComponentLibraryFieldFilter] = useState<string | null>(null)
   const [manualLibraryModels, setManualLibraryModels] = useState<Map<string, PreviewFootprintModel>>(
@@ -249,10 +252,10 @@ function App() {
     startX: number
     startWidth: number
   } | null>(null)
-  const [auxiliaryLoading, setAuxiliaryLoading] = useState<'bom' | 'placement' | 'library' | null>(null)
+  const [auxiliaryLoading, setAuxiliaryLoading] = useState<'bom' | 'placement' | null>(null)
   const [loading, setLoading] = useState({ active: true, progress: 0, file: '示例板' })
   const [error, setError] = useState<string | null>(null)
-  const [draggingImport, setDraggingImport] = useState<'gerber' | 'bom' | 'placement' | 'library' | null>(null)
+  const [draggingImport, setDraggingImport] = useState<'gerber' | 'bom' | 'placement' | null>(null)
   const [thickness, setThickness] = useState(1.6)
   const [boardColor, setBoardColor] = useState(colorOptions[0].value)
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('iso')
@@ -392,6 +395,27 @@ function App() {
     setBomCellEdit(null)
   }
 
+  const syncComponentLibraryFromKingdee = async () => {
+    setKingdeeSyncing(true)
+    setError(null)
+    try {
+      const parsed = await syncKingdeeComponentLibrary()
+      clearManualLibraryModels()
+      setComponentLibraryData(parsed)
+      setComponentLibraryQuery('')
+      setComponentLibraryFieldFilter(null)
+      setKingdeeLastSync(new Date())
+      if (sourceBomData) reconcileBomWithLibrary(sourceBomData, parsed)
+      return parsed
+    } catch (syncError) {
+      const message = syncError instanceof Error ? syncError.message : '无法从金蝶同步物料数据'
+      setError(`金蝶同步失败：${message}`)
+      throw syncError
+    } finally {
+      setKingdeeSyncing(false)
+    }
+  }
+
   const handleGerberFiles = async (files: File[]) => {
     if (files.length === 0) return
     setLoading({ active: true, progress: 0, file: '读取文件' })
@@ -408,17 +432,15 @@ function App() {
     }
   }
 
-  const handleAuxiliaryFile = async (kind: 'bom' | 'placement' | 'library', file?: File) => {
+  const handleAuxiliaryFile = async (kind: 'bom' | 'placement', file?: File) => {
     if (!file) return
-    const allowed = kind === 'bom' || kind === 'library'
+    const allowed = kind === 'bom'
       ? /\.(?:xlsx?|csv|tsv)$/i
       : /\.(?:xlsx?|csv|tsv|txt|pos)$/i
     if (!allowed.test(file.name)) {
       setError(kind === 'bom'
         ? 'BOM 仅支持 XLSX、XLS、CSV 或 TSV 文件'
-        : kind === 'library'
-          ? '元件库仅支持 XLSX、XLS、CSV 或 TSV 文件'
-          : '坐标文件仅支持 XLSX、XLS、CSV、TSV、TXT 或 POS 文件')
+        : '坐标文件仅支持 XLSX、XLS、CSV、TSV、TXT 或 POS 文件')
       return
     }
     if (file.size > 24 * 1024 * 1024) {
@@ -434,30 +456,22 @@ function App() {
         setSourceBomData(parsed)
         reconcileBomWithLibrary(parsed, componentLibraryData)
         setBomFile(file)
-      } else if (kind === 'placement') {
+      } else {
         const parsed = await parsePlacementFile(file)
         setPlacementData(parsed)
         setPlacementFile(file)
         setSelectedBomId(null)
         setBomRowOrientations(new Map())
-      } else {
-        const parsed = await parseComponentLibraryFile(file)
-        clearManualLibraryModels()
-        setComponentLibraryData(parsed)
-        setComponentLibraryFile(file)
-        setComponentLibraryQuery('')
-        setComponentLibraryFieldFilter(null)
-        if (sourceBomData) reconcileBomWithLibrary(sourceBomData, parsed)
       }
     } catch (parseError) {
-      const label = kind === 'bom' ? 'BOM' : kind === 'placement' ? '坐标文件' : '元件库'
+      const label = kind === 'bom' ? 'BOM' : '坐标文件'
       setError(`${label} 解析失败：${parseError instanceof Error ? parseError.message : '文件格式不受支持'}`)
     } finally {
       setAuxiliaryLoading(null)
     }
   }
 
-  const handleImportDrop = (kind: 'gerber' | 'bom' | 'placement' | 'library', files: File[]) => {
+  const handleImportDrop = (kind: 'gerber' | 'bom' | 'placement', files: File[]) => {
     setDraggingImport(null)
     if (kind === 'gerber') void handleGerberFiles(files)
     else void handleAuxiliaryFile(kind, files[0])
@@ -1120,41 +1134,31 @@ function App() {
           </div>
           <div className="import-list">
             <div
-              className={`import-target library ${componentLibraryFile ? 'ready' : ''}`}
+              className={`import-target library ${componentLibraryData ? 'ready' : ''}`}
             >
               <Database size={20} />
               <div>
-                <strong>物料数据</strong>
+                <strong>金蝶 ERP</strong>
                 <span
-                  title={[
-                    componentLibraryFile?.name,
-                    ...(componentLibraryData?.warnings ?? []),
-                  ].filter(Boolean).join(' · ')}
+                  title={(componentLibraryData?.warnings ?? []).join(' · ')}
                 >
-                  {componentLibraryFile && componentLibraryData
-                    ? `${componentLibraryFile.name} · ${componentLibraryData.items.length} 条`
-                    : 'XLSX / XLS / CSV / TSV'}
+                  {componentLibraryData
+                    ? `已同步 ${componentLibraryData.items.length} 条电子物料`
+                    : '连接 K/3 Cloud 并同步物料'}
                 </span>
               </div>
               <button
-                onClick={() => setComponentLibraryPageOpen(true)}
-                title="打开元件库"
-                aria-label="打开元件库"
+                onClick={() => {
+                  setComponentLibraryPageView('connection')
+                  setComponentLibraryPageOpen(true)
+                }}
+                title="连接金蝶 ERP"
+                aria-label="连接金蝶 ERP"
               >
                 <Database size={16} />
               </button>
             </div>
           </div>
-          <input
-            ref={componentLibraryInputRef}
-            type="file"
-            hidden
-            accept=".xlsx,.xls,.csv,.tsv"
-            onChange={(event) => {
-              void handleAuxiliaryFile('library', event.target.files?.[0])
-              event.target.value = ''
-            }}
-          />
           <input
             ref={manualModelInputRef}
             type="file"
@@ -1657,69 +1661,102 @@ function App() {
       </footer>
 
       {componentLibraryPageOpen && (
-        <section className="library-page" role="dialog" aria-modal="true" aria-label="元件库导入">
+        <section className="library-page" role="dialog" aria-modal="true" aria-label="金蝶 ERP 元件库">
           <header className="library-page-header">
             <div className="library-page-title">
               <span className="library-page-mark"><Database size={19} /></span>
               <div>
-                <strong>元件库导入</strong>
-                <span>{componentLibraryFile?.name ?? '尚未载入元件库文件'}</span>
+                <strong>金蝶 ERP</strong>
+                <span>
+                  {componentLibraryData
+                    ? `已同步 ${componentLibraryData.items.length} 条电子物料`
+                    : '配置 K/3 Cloud 连接并同步电子物料'}
+                </span>
               </div>
             </div>
-            <button className="library-back-button" type="button" onClick={closeComponentLibraryPage}>
-              <ArrowLeft size={16} />
-              <span>返回 PCB</span>
-            </button>
+            <div className="library-header-actions">
+              <button
+                className="library-view-toggle"
+                type="button"
+                aria-label={componentLibraryPageView === 'connection' ? '查看 BOM 数据' : '打开金蝶连接配置'}
+                title={componentLibraryPageView === 'connection' ? '查看 BOM 数据' : '打开金蝶连接配置'}
+                onClick={() => {
+                  if (componentLibraryPageView === 'connection') {
+                    setComponentLibraryPageView('materials')
+                    if (!componentLibraryData && !kingdeeSyncing) {
+                      void syncComponentLibraryFromKingdee().catch(() => undefined)
+                    }
+                  } else {
+                    setComponentLibraryPageView('connection')
+                  }
+                }}
+              >
+                {componentLibraryPageView === 'connection' ? <Database size={15} /> : <ArrowLeft size={15} />}
+                <span>{componentLibraryPageView === 'connection' ? 'BOM 数据' : '连接配置'}</span>
+              </button>
+              <button
+                className="library-back-button"
+                type="button"
+                aria-label="返回 PCB"
+                title="返回 PCB"
+                onClick={closeComponentLibraryPage}
+              >
+                <X size={16} />
+                <span>返回 PCB</span>
+              </button>
+            </div>
           </header>
 
+          {componentLibraryPageView === 'connection' ? (
+            <KingdeeConnectionPanel
+              onSaved={async () => {
+                await syncComponentLibraryFromKingdee()
+                setComponentLibraryPageView('materials')
+              }}
+            />
+          ) : (
           <div className="library-page-body">
             <aside className="library-import-pane">
               <div className="library-pane-heading">
-                <span>数据来源</span>
+                <span>金蝶数据源</span>
                 <span className="count-badge">{componentLibraryData?.items.length ?? 0}</span>
               </div>
-              <div
-                className={`library-drop-zone ${draggingImport === 'library' ? 'dragging' : ''} ${componentLibraryFile ? 'ready' : ''}`}
-                onDragEnter={(event) => {
-                  event.preventDefault()
-                  setDraggingImport('library')
-                }}
-                onDragOver={(event) => event.preventDefault()}
-                onDragLeave={(event) => {
-                  if (event.currentTarget === event.target) setDraggingImport(null)
-                }}
-                onDrop={(event) => {
-                  event.preventDefault()
-                  handleImportDrop('library', Array.from(event.dataTransfer.files))
-                }}
-              >
-                {auxiliaryLoading === 'library'
+              <div className={`kingdee-sync-panel ${componentLibraryData ? 'ready' : ''}`}>
+                {kingdeeSyncing
                   ? <LoaderCircle className="spin" size={28} />
-                  : <Upload size={28} />}
-                <strong>{componentLibraryFile ? '替换元件库文件' : '导入元件库文件'}</strong>
-                <span>XLSX、XLS、CSV 或 TSV</span>
+                  : componentLibraryData
+                    ? <CheckCircle2 size={28} />
+                    : <CloudDownload size={28} />}
+                <strong>{kingdeeSyncing ? '正在同步电子物料' : componentLibraryData ? '金蝶物料已同步' : '等待同步物料'}</strong>
+                <span>
+                  {componentLibraryData
+                    ? `${componentLibraryData.items.length} 条 · ${kingdeeLastSync?.toLocaleTimeString('zh-CN', { hour12: false }) ?? '本次会话'}`
+                    : '读取编码 21 至 29 开头的电子物料'}
+                </span>
                 <button
                   className="primary-button"
                   type="button"
-                  disabled={auxiliaryLoading === 'library'}
-                  onClick={() => componentLibraryInputRef.current?.click()}
+                  aria-label={componentLibraryData ? '重新同步金蝶物料' : '同步金蝶物料'}
+                  title={componentLibraryData ? '重新同步金蝶物料' : '同步金蝶物料'}
+                  disabled={kingdeeSyncing}
+                  onClick={() => void syncComponentLibraryFromKingdee().catch(() => undefined)}
                 >
-                  <FolderOpen size={15} />
-                  <span>选择文件</span>
+                  {kingdeeSyncing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
+                  <span>{componentLibraryData ? '重新同步' : '同步物料'}</span>
                 </button>
               </div>
 
-              {componentLibraryFile && componentLibraryData && (
+              {componentLibraryData && (
                 <div className="library-file-details">
                   <div>
-                    <span>当前文件</span>
-                    <strong title={componentLibraryFile.name}>{componentLibraryFile.name}</strong>
+                    <span>当前数据源</span>
+                    <strong>金蝶 K/3 Cloud · BD_MATERIAL</strong>
                   </div>
                   <dl>
-                    <div><dt>工作表</dt><dd>{componentLibraryData.sheetName}</dd></div>
-                    <div><dt>源数据</dt><dd>{componentLibraryData.sourceRows} 行</dd></div>
+                    <div><dt>数据源</dt><dd>{componentLibraryData.sheetName}</dd></div>
+                    <div><dt>查询范围</dt><dd>编码 21–29</dd></div>
                     <div><dt>有效物料</dt><dd>{componentLibraryData.items.length} 条</dd></div>
-                    <div><dt>文件大小</dt><dd>{formatBytes(componentLibraryFile.size)}</dd></div>
+                    <div><dt>同步方式</dt><dd>WebAPI</dd></div>
                   </dl>
                 </div>
               )}
@@ -1855,14 +1892,15 @@ function App() {
                   ) : (
                     <div className="library-empty-state">
                       <Database size={34} />
-                      <strong>尚未导入元件库</strong>
-                      <span>选择左侧文件后将在这里显示物料数据</span>
+                      <strong>{kingdeeSyncing ? '正在同步金蝶物料' : '尚未同步元件库'}</strong>
+                      <span>{kingdeeSyncing ? '数据读取完成后会自动显示' : '请先返回连接配置保存账号并同步'}</span>
                     </div>
                   )}
                 </div>
               </div>
             </section>
           </div>
+          )}
 
           {error && (
             <div className="error-banner library-page-error" role="alert">

@@ -1,0 +1,10 @@
+{
+  "base_url": "https://your-server.example.com/K3Cloud/",
+  "dbid": "数据中心ID",
+  "username": "业务用户名称",
+  "appid": "第三方系统应用ID",
+  "app_secret": "第三方系统应用密钥",
+  "protocol": "v4",
+  "lcid": "2052",
+  "org_number": "100"
+}

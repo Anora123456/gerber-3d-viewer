@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "api": "python server/kingdee_server.py --port 8765",
     "build": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build",
     "models:convert": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/convert-step-models.ps1",
-    "preview": "vite preview"
+    "preview": "python server/kingdee_server.py --port 4173",
+    "test:server": "python -m unittest discover -s server -p test_*.py -v"
   },
   "dependencies": {
     "jszip": "^3.10.1",

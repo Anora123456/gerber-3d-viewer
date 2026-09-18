@@ -5,5 +5,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: '127.0.0.1',
+    proxy: {
+      '/api/kingdee': 'http://127.0.0.1:8765',
+    },
   },
 })
