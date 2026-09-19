@@ -8,7 +8,13 @@ import {
 } from 'react'
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowDownFromLine,
   ArrowDownToLine,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpFromLine,
   ArrowUpToLine,
   CheckCircle2,
   CloudDownload,
@@ -143,6 +149,30 @@ type MaterialModelBindings = Record<string, string>
 
 const materialModelBindingsStorageKey = 'fabview.kingdee-step-bindings.v1'
 const materialMatchesStorageKey = 'fabview.kingdee-material-matches.v1'
+
+/** 位置微调每次的步长（mm），六个移动按钮共用。 */
+const bomRowNudgeStepMm = 0.25
+
+function emptyPackageOrientation(): PackageOrientation {
+  return { rotationZ: 0, rotationX: 0, offsetX: 0, offsetY: 0, offsetZ: 0 }
+}
+
+interface BomNudgeControl {
+  axis: 'offsetX' | 'offsetY' | 'offsetZ'
+  direction: 1 | -1
+  label: string
+  hint: string
+  Icon: typeof ArrowLeft
+}
+
+const bomRowNudgeControls: readonly BomNudgeControl[] = [
+  { axis: 'offsetX', direction: -1, label: '左移动', hint: '沿板面 X 轴左移', Icon: ArrowLeft },
+  { axis: 'offsetX', direction: 1, label: '右移动', hint: '沿板面 X 轴右移', Icon: ArrowRight },
+  { axis: 'offsetY', direction: 1, label: '上移动', hint: '沿板面 Y 轴上移', Icon: ArrowUp },
+  { axis: 'offsetY', direction: -1, label: '下移动', hint: '沿板面 Y 轴下移', Icon: ArrowDown },
+  { axis: 'offsetZ', direction: 1, label: '高度+', hint: '沿元件面法向抬高', Icon: ArrowUpFromLine },
+  { axis: 'offsetZ', direction: -1, label: '高度-', hint: '沿元件面法向降低', Icon: ArrowDownFromLine },
+]
 const footprintModelByPath = new Map(footprintModels.map((model) => [model.sourcePath, model]))
 const stepFootprintModels = footprintModels.filter((model) => Boolean(model.stepUrl))
 
@@ -345,11 +375,26 @@ function App() {
     if (!selectedBomItem) return
     setBomRowOrientations((current) => {
       const next = new Map(current)
-      const orientation = next.get(selectedBomItem.id) ?? { rotationZ: 0, rotationX: 0 }
+      const orientation = next.get(selectedBomItem.id) ?? emptyPackageOrientation()
       next.set(selectedBomItem.id, {
         ...orientation,
         [axis]: (orientation[axis] + 90) % 360,
       })
+      return next
+    })
+  }
+
+  /** 位置微调：位移是相对原始坐标的绝对量，反复点不会累积漂移。 */
+  const nudgeSelectedBomRow = (
+    axis: BomNudgeControl['axis'],
+    direction: BomNudgeControl['direction'],
+  ) => {
+    if (!selectedBomItem) return
+    setBomRowOrientations((current) => {
+      const next = new Map(current)
+      const orientation = next.get(selectedBomItem.id) ?? emptyPackageOrientation()
+      const value = Math.round((orientation[axis] + direction * bomRowNudgeStepMm) * 1000) / 1000
+      next.set(selectedBomItem.id, { ...orientation, [axis]: value })
       return next
     })
   }
@@ -1807,7 +1852,7 @@ function App() {
             onClearSelection={clearBomSelection}
           />
 
-          <div className="bom-row-orientation-controls" aria-label="选中 BOM 行方向调整">
+          <div className="bom-row-orientation-controls" aria-label="选中 BOM 行方向与位置调整">
             <button
               disabled={!selectedBomItem}
               onClick={() => adjustSelectedBomRowOrientation('rotationZ')}
@@ -1830,6 +1875,20 @@ function App() {
               <FlipVertical2 size={15} />
               <span>90°翻转</span>
             </button>
+            {bomRowNudgeControls.map(({ axis, direction, label, hint, Icon }) => (
+              <button
+                disabled={!selectedBomItem}
+                key={`${axis}-${direction}`}
+                onClick={() => nudgeSelectedBomRow(axis, direction)}
+                title={selectedBomItem
+                  ? `将当前行的 ${selectedBomItem.designators.join(', ')} ${hint} ${bomRowNudgeStepMm} mm`
+                  : '先选择一条 BOM 核对行'}
+                type="button"
+              >
+                <Icon size={15} />
+                <span>{label}</span>
+              </button>
+            ))}
           </div>
 
           {loading.active && (

@@ -29,6 +29,12 @@ export interface LayerVisibility {
 export interface PackageOrientation {
   rotationZ: number
   rotationX: number
+  /** 沿板面 X 轴的位移（mm）。 */
+  offsetX: number
+  /** 沿板面 Y 轴的位移（mm）。 */
+  offsetY: number
+  /** 沿元件所在面法向的高度偏移（mm），正值表示远离板面。 */
+  offsetZ: number
 }
 
 interface PcbViewerProps {
@@ -307,6 +313,12 @@ function createPlacementObject(
     const inPlaneRoot = new THREE.Group()
     const modelRoot = new THREE.Group()
     const surfaceOffset = thickness / 2 + 0.09
+    // 记下基准位置：位移是相对基准的绝对量，反复调整不会累积漂移。
+    marker.userData.basePosition = {
+      x: placement.boardXmm,
+      y: placement.boardYmm,
+      z: side === 'bottom' ? -surfaceOffset : surfaceOffset,
+    }
     marker.position.set(
       placement.boardXmm,
       placement.boardYmm,
@@ -381,9 +393,26 @@ function applyPlacementOrientation(marker: THREE.Object3D, orientation?: Package
   if (typeof baseRotation !== 'number') return
   const rotationZ = orientation?.rotationZ ?? 0
   const rotationX = orientation?.rotationX ?? 0
+  const offsetX = orientation?.offsetX ?? 0
+  const offsetY = orientation?.offsetY ?? 0
+  const offsetZ = orientation?.offsetZ ?? 0
   marker.userData.appliedRotationZ = rotationZ
   marker.userData.appliedRotationX = rotationX
+  marker.userData.appliedOffsetX = offsetX
+  marker.userData.appliedOffsetY = offsetY
+  marker.userData.appliedOffsetZ = offsetZ
   marker.userData.appliedPlacementRotation = (baseRotation + rotationZ) % 360
+
+  const basePosition = marker.userData.basePosition as { x: number; y: number; z: number } | undefined
+  if (basePosition) {
+    // 底面元件的外法向是 -Z，取反后「高度+」在两个面上都是远离板面。
+    const heightSign = marker.userData.surfaceSide === 'bottom' ? -1 : 1
+    marker.position.set(
+      basePosition.x + offsetX,
+      basePosition.y + offsetY,
+      basePosition.z + offsetZ * heightSign,
+    )
+  }
 
   const sideRoot = marker.children.find((child) => child.userData.componentSurfaceRoot) as THREE.Group | undefined
   const inPlaneRoot = sideRoot?.children.find((child) => child.userData.componentRotationRoot) as THREE.Group | undefined
@@ -1708,6 +1737,15 @@ export default function PcbViewer({
           renderer.domElement.dataset.flippedPlacements = String(
             placementMarkers.filter((child) => child.userData.appliedRotationX !== 0).length,
           )
+          const movedMarkers = placementMarkers.filter((child) => (
+            child.userData.appliedOffsetX !== 0
+            || child.userData.appliedOffsetY !== 0
+            || child.userData.appliedOffsetZ !== 0
+          ))
+          renderer.domElement.dataset.movedPlacements = String(movedMarkers.length)
+          renderer.domElement.dataset.placementOffsets = movedMarkers
+            .map((marker) => `${marker.userData.designator}:${marker.userData.appliedOffsetX},${marker.userData.appliedOffsetY},${marker.userData.appliedOffsetZ}`)
+            .join(',')
         } else {
           renderer.domElement.dataset.placementCount = '0'
           renderer.domElement.dataset.placementInside = '0'
@@ -1732,6 +1770,8 @@ export default function PcbViewer({
           renderer.domElement.dataset.bottomPlacementRotations = ''
           renderer.domElement.dataset.rotatedPlacements = '0'
           renderer.domElement.dataset.flippedPlacements = '0'
+          renderer.domElement.dataset.movedPlacements = '0'
+          renderer.domElement.dataset.placementOffsets = ''
         }
         updateSelectionOverlay(camera, renderer.domElement)
         composer.render()

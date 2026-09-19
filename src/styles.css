@@ -3312,6 +3312,8 @@ button {
   left: 14px;
   z-index: 3;
   display: flex;
+  max-width: calc(100% - 28px);
+  flex-wrap: wrap;
   gap: 6px;
 }
 
