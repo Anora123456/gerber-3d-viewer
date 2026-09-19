@@ -45,6 +45,8 @@ interface PcbViewerProps {
   selectionRevision: number
   bomRowOrientations: ReadonlyMap<string, PackageOrientation>
   onComponentSelect: (designator: string) => void
+  /** 双击未命中元件的空白处时调用，用于解除高亮。 */
+  onClearSelection: () => void
 }
 
 type LayerKind = Exclude<keyof LayerVisibility, 'grid' | 'components'>
@@ -1201,6 +1203,7 @@ export default function PcbViewer({
   selectionRevision,
   bomRowOrientations,
   onComponentSelect,
+  onClearSelection,
 }: PcbViewerProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -1221,6 +1224,7 @@ export default function PcbViewer({
   const visibilityRef = useRef(visibility)
   const bomRowOrientationsRef = useRef(bomRowOrientations)
   const onComponentSelectRef = useRef(onComponentSelect)
+  const onClearSelectionRef = useRef(onClearSelection)
   const [renderError, setRenderError] = useState<string | null>(null)
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
   const [viewportRevision, setViewportRevision] = useState(0)
@@ -1433,7 +1437,8 @@ export default function PcbViewer({
 
   useEffect(() => {
     onComponentSelectRef.current = onComponentSelect
-  }, [onComponentSelect])
+    onClearSelectionRef.current = onClearSelection
+  }, [onComponentSelect, onClearSelection])
 
   useEffect(() => {
     const host = hostRef.current
@@ -1507,7 +1512,7 @@ export default function PcbViewer({
         renderer.domElement.focus({ preventScroll: true })
         pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY }
       }
-      const designatorAtPointer = (event: PointerEvent) => {
+      const designatorAtPointer = (event: MouseEvent) => {
         const componentRoot = componentRootRef.current
         if (!componentRoot || !componentRoot.visible || !visibilityRef.current.components) return null
         const bounds = renderer.domElement.getBoundingClientRect()
@@ -1543,10 +1548,18 @@ export default function PcbViewer({
         hoveredDesignatorRef.current = null
         renderer.domElement.dataset.hoveredDesignator = ''
       }
-      renderer.domElement.title = '点击元件以定位 BOM 行'
+      // 双击空白处（未命中任何元件）解除高亮；单击留给「选中元件 / 旋转视角」，
+      // 所以要用双击才不会在拖拽旋转时误清选中。
+      const handleDoubleClick = (event: MouseEvent) => {
+        if (designatorAtPointer(event)) return
+        renderer.domElement.dataset.selectedDesignator = ''
+        onClearSelectionRef.current()
+      }
+      renderer.domElement.title = '单击元件以定位 BOM 行；双击空白处解除高亮'
       renderer.domElement.addEventListener('pointerdown', handlePointerDown)
       renderer.domElement.addEventListener('pointermove', handlePointerMove)
       renderer.domElement.addEventListener('pointerup', handlePointerUp)
+      renderer.domElement.addEventListener('dblclick', handleDoubleClick)
       renderer.domElement.addEventListener('pointercancel', clearPointerStart)
       renderer.domElement.addEventListener('pointerleave', clearPointerStart)
 
@@ -1757,6 +1770,7 @@ export default function PcbViewer({
         renderer.domElement.removeEventListener('pointerdown', handlePointerDown)
         renderer.domElement.removeEventListener('pointermove', handlePointerMove)
         renderer.domElement.removeEventListener('pointerup', handlePointerUp)
+        renderer.domElement.removeEventListener('dblclick', handleDoubleClick)
         renderer.domElement.removeEventListener('pointercancel', clearPointerStart)
         renderer.domElement.removeEventListener('pointerleave', clearPointerStart)
         if (animationRef.current !== null) cancelAnimationFrame(animationRef.current)

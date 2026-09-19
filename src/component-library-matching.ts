@@ -7,7 +7,8 @@ export interface BomLibraryMatch {
 
 const passivePackages = new Set(['0201', '0402', '0603', '0805', '1206', '1210', '1812', '2512'])
 
-function normalizeText(value: string): string {
+/** 归一化文本，用于比对；也被 App 用来生成「人工核对结果」的持久化键。 */
+export function normalizeText(value: string): string {
   return value
     .normalize('NFKC')
     .toLocaleLowerCase()

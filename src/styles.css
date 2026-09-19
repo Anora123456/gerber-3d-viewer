@@ -951,13 +951,26 @@ button {
 }
 
 .model-browser-list {
-  display: grid;
+  position: relative;
   max-height: 190px;
   overflow-y: auto;
   border-top: 1px solid #303934;
   border-bottom: 1px solid #303934;
   scrollbar-color: #455048 transparent;
   scrollbar-width: thin;
+}
+
+.model-browser-list-track {
+  position: relative;
+  width: 100%;
+}
+
+.model-browser-list-window {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: grid;
 }
 
 .model-browser-list button {
@@ -975,10 +988,6 @@ button {
   font-size: 9px;
   text-align: left;
   cursor: pointer;
-}
-
-.model-browser-list button:last-of-type {
-  border-bottom: 0;
 }
 
 .model-browser-list button svg {
@@ -1025,6 +1034,7 @@ button {
 }
 
 .step-picker-dialog {
+  position: relative;
   display: grid;
   width: min(980px, calc(100vw - 44px));
   height: min(720px, calc(100vh - 44px));
@@ -1138,10 +1148,27 @@ button {
   font-weight: 700;
 }
 
-.step-picker-categories button {
+.step-picker-category-summary {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0;
+  padding: 0 9px 8px;
+  border-bottom: 1px solid #2b342e;
+  color: #7e8b83;
+  font-size: 9px;
+}
+
+.step-picker-category-summary strong {
+  color: #cfd8d2;
+  font-variant-numeric: tabular-nums;
+}
+
+.step-picker-category-all {
   display: grid;
   width: 100%;
-  height: 36px;
+  height: 34px;
+  margin-top: 6px;
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
@@ -1156,31 +1183,168 @@ button {
   cursor: pointer;
 }
 
-.step-picker-categories button span {
+.step-picker-category-all span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.step-picker-categories button strong {
+.step-picker-category-all strong {
   color: #6f7c74;
   font-size: 9px;
   font-variant-numeric: tabular-nums;
 }
 
-.step-picker-categories button:hover {
+.step-picker-category-all:hover {
   color: #dce3de;
   background: #202822;
 }
 
-.step-picker-categories button.active {
+.step-picker-category-all.active {
   border-left-color: #d0ae54;
   color: #f2e4ba;
   background: #29281e;
 }
 
-.step-picker-categories button.active svg,
-.step-picker-categories button.active strong {
+.step-picker-category-all.active svg,
+.step-picker-category-all.active strong {
+  color: #d5b75f;
+}
+
+.step-picker-group {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid #232b26;
+}
+
+.step-picker-group-toggle {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 26px minmax(0, 1fr) auto 14px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 5px;
+  color: #c3ccc6;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.step-picker-group-toggle:hover {
+  background: #202822;
+}
+
+.step-picker-group-mark {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid #3b4840;
+  border-radius: 6px;
+  color: #9fd0c3;
+  background: #1b231e;
+}
+
+.step-picker-group-text {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.step-picker-group-text strong {
+  overflow: hidden;
+  color: #dfe6e1;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-picker-group-text small {
+  overflow: hidden;
+  color: #717e76;
+  font-size: 8.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-picker-group-toggle em {
+  color: #8b988f;
+  font-size: 9px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.step-picker-group-arrow {
+  color: #66756d;
+  transition: transform 120ms ease;
+}
+
+.step-picker-group-arrow.open {
+  transform: rotate(90deg);
+}
+
+.step-picker-group.active .step-picker-group-mark {
+  border-color: #7a6c3c;
+  color: #e8d69b;
+  background: #2a2718;
+}
+
+.step-picker-group.active > .step-picker-group-toggle {
+  background: #1e251f;
+}
+
+.step-picker-group-items {
+  display: grid;
+  gap: 1px;
+  margin-left: 22px;
+  padding: 3px 0 3px 12px;
+  border-left: 1px solid #2c352f;
+}
+
+.step-picker-group-items button {
+  display: grid;
+  width: 100%;
+  height: 27px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  color: #96a29a;
+  background: transparent;
+  font-size: 9.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.step-picker-group-items button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-picker-group-items button strong {
+  color: #66736b;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.step-picker-group-items button:hover {
+  color: #dce3de;
+  background: #202822;
+}
+
+.step-picker-group-items button.active {
+  color: #f2e4ba;
+  background: #29281e;
+  box-shadow: inset 2px 0 #d0ae54;
+}
+
+.step-picker-group-items button.active strong {
   color: #d5b75f;
 }
 
@@ -1235,6 +1399,227 @@ button {
   white-space: nowrap;
 }
 
+/* ===== BOM 待处理元件的「替换元件」选择器 ===== */
+
+.replace-picker-dialog {
+  width: min(760px, calc(100vw - 44px));
+  height: min(660px, calc(100vh - 44px));
+  grid-template-rows: 62px minmax(0, 1fr) 64px;
+}
+
+.replace-picker-body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 38px 22px minmax(0, 1fr);
+  gap: 8px;
+  padding: 12px 14px;
+  background: #171d19;
+}
+
+.replace-picker-search {
+  display: flex;
+  min-width: 0;
+  height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid #414c45;
+  border-radius: 5px;
+  color: #87948c;
+  background: #111713;
+}
+
+.replace-picker-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgb(208 168 79 / 14%);
+}
+
+.replace-picker-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  color: #e2e8e4;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+}
+
+.replace-picker-search button {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  color: #87948c;
+  background: transparent;
+  cursor: pointer;
+}
+
+.replace-picker-search button:hover {
+  color: #dbe2dd;
+  background: #232b25;
+}
+
+.replace-picker-summary {
+  margin: 0;
+  color: #78857d;
+  font-size: 9px;
+}
+
+.replace-picker-summary strong {
+  color: #d3dad5;
+}
+
+.replace-picker-list {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid #333d36;
+  border-radius: 5px;
+  background: #131814;
+  list-style: none;
+  scrollbar-color: #455048 transparent;
+  scrollbar-width: thin;
+}
+
+.replace-picker-option {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 96px minmax(0, 1fr) 150px 34px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 0;
+  border-bottom: 1px solid #232b26;
+  color: #cbd3cd;
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.replace-picker-option.current {
+  background: #1a241d;
+  box-shadow: inset 2px 0 #d0a84f;
+}
+
+.replace-picker-option:hover,
+.replace-picker-option:focus-visible {
+  outline: 0;
+  background: #1d2a22;
+}
+
+.replace-picker-sku {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: #97a29a;
+  font-variant-numeric: tabular-nums;
+}
+
+.replace-picker-sku > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replace-picker-current {
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #e0bb63;
+  background: #3a3321;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.replace-picker-name {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.replace-picker-name strong {
+  overflow: hidden;
+  color: #dfe5e0;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replace-picker-name small {
+  overflow: hidden;
+  color: #7c8880;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replace-picker-model {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  color: #6f7c74;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replace-picker-model.matched {
+  color: #8fd0b1;
+}
+
+.replace-picker-model.matched svg {
+  flex: 0 0 auto;
+}
+
+.replace-picker-score {
+  color: #d0a84f;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: right;
+}
+
+.replace-picker-empty {
+  padding: 22px 10px;
+  color: #6f7c74;
+  font-size: 10px;
+  text-align: center;
+}
+
+.replace-picker-cancel {
+  display: inline-flex;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid #48544c;
+  border-radius: 5px;
+  color: #bdc7c0;
+  background: #252d27;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.replace-picker-cancel:hover {
+  border-color: #6d7b72;
+  color: #e6ebe7;
+  background: #2d362f;
+}
+
 .step-picker-actions {
   display: flex;
   flex: 0 0 auto;
@@ -1255,6 +1640,7 @@ button {
   background: #252d27;
   font-size: 10px;
   font-weight: 700;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -1285,6 +1671,328 @@ button {
 .step-picker-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.step-picker-actions .step-picker-import {
+  border-color: #3f6a63;
+  color: #b8e0d6;
+  background: #1d322d;
+}
+
+.step-picker-actions .step-picker-import:hover:not(:disabled) {
+  border-color: #63a396;
+  color: #eafaf5;
+  background: #264038;
+}
+
+.step-picker-file-input {
+  display: none;
+}
+
+.step-picker-footer > div:first-child small {
+  overflow: hidden;
+  color: #7d8a82;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 导入 3D 封装面板 */
+.step-picker-import-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgb(5 8 6 / 72%);
+}
+
+.step-picker-import {
+  display: grid;
+  width: min(540px, 100%);
+  max-height: 100%;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #48564d;
+  border-radius: 7px;
+  color: #dce2de;
+  background: #171e19;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 46%);
+}
+
+.step-picker-import-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 15px;
+  border-bottom: 1px solid #2d3731;
+}
+
+.step-picker-import-header > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #486a60;
+  border-radius: 5px;
+  color: #91c7bc;
+  background: #21342e;
+}
+
+.step-picker-import-header > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.step-picker-import-header strong {
+  font-size: 12px;
+}
+
+.step-picker-import-header small {
+  overflow: hidden;
+  color: #87948c;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-picker-import-header > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #414c45;
+  border-radius: 5px;
+  color: #aeb8b1;
+  background: #222a25;
+  cursor: pointer;
+}
+
+.step-picker-import-header > button:hover {
+  border-color: #718078;
+  color: #ffffff;
+  background: #303a32;
+}
+
+.step-picker-import-body {
+  display: grid;
+  gap: 12px;
+  padding: 15px;
+  overflow-y: auto;
+  scrollbar-color: #455048 transparent;
+  scrollbar-width: thin;
+}
+
+.step-picker-import-file {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #2d3731;
+  border-radius: 5px;
+  background: #141a16;
+}
+
+.step-picker-import-file > div {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.step-picker-import-file dt {
+  color: #7d8a82;
+  font-size: 9.5px;
+}
+
+.step-picker-import-file dd {
+  margin: 0;
+  overflow: hidden;
+  color: #d5dcd7;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-picker-import-target {
+  display: grid;
+  gap: 6px;
+}
+
+.step-picker-import-target > span {
+  color: #8c9991;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.step-picker-import-target select {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid #39453e;
+  border-radius: 5px;
+  outline: 0;
+  color: #dce2de;
+  background: #121713;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.step-picker-import-target select:focus-visible {
+  border-color: #71887a;
+}
+
+.step-picker-import-target select:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.step-picker-import-hint,
+.step-picker-import-result,
+.step-picker-import-error {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #3a443c;
+  border-radius: 5px;
+  color: #a9b4ad;
+  background: #141a16;
+  font-size: 9.5px;
+  line-height: 1.65;
+}
+
+.step-picker-import-result {
+  border-color: #3f6a5a;
+  color: #bfe2d7;
+  background: #16241f;
+}
+
+.step-picker-import-error {
+  border-color: #70493f;
+  color: #e2b0a2;
+  background: #2a1d19;
+}
+
+.step-picker-import-hint svg,
+.step-picker-import-result svg,
+.step-picker-import-error svg {
+  margin-top: 1px;
+}
+
+.step-picker-import-hint code,
+.step-picker-import-result code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #e6ddc0;
+  background: #222a24;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.step-picker-import-report {
+  display: grid;
+  gap: 8px;
+}
+
+.step-picker-import-breakdown {
+  display: grid;
+  gap: 4px;
+  max-height: 168px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow-y: auto;
+  border: 1px solid #2d3731;
+  border-radius: 5px;
+  background: #141a16;
+  list-style: none;
+  scrollbar-color: #455048 transparent;
+  scrollbar-width: thin;
+}
+
+.step-picker-import-breakdown li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  color: #a9b4ad;
+  font-size: 9.5px;
+}
+
+.step-picker-import-breakdown li > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-picker-import-breakdown li > strong {
+  color: #d5dcd7;
+  font-size: 9.5px;
+}
+
+.step-picker-import-skipped {
+  border: 1px solid #3a443c;
+  border-radius: 5px;
+  background: #141a16;
+  font-size: 9.5px;
+}
+
+.step-picker-import-skipped > summary {
+  padding: 8px 10px;
+  color: #c0b08a;
+  cursor: pointer;
+}
+
+.step-picker-import-skipped > summary:focus-visible {
+  outline: 1px solid #71887a;
+  outline-offset: -1px;
+}
+
+.step-picker-import-skipped > ul {
+  display: grid;
+  gap: 6px;
+  max-height: 168px;
+  margin: 0;
+  padding: 0 10px 10px;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-color: #455048 transparent;
+  scrollbar-width: thin;
+}
+
+.step-picker-import-skipped li {
+  display: grid;
+  gap: 2px;
+  color: #8c9991;
+}
+
+.step-picker-import-skipped li code {
+  color: #e6ddc0;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.step-picker-import-actions {
+  justify-content: flex-end;
+  padding: 12px 15px;
+  border-top: 1px solid #2d3731;
+  border-bottom: 0;
+  background: #1b221d;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-picker-group-arrow {
+    transition: none;
+  }
 }
 
 .library-data-pane {
@@ -1886,7 +2594,7 @@ button {
 }
 
 .pending-actions {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .bom-action-button.restore:hover {
@@ -2084,6 +2792,11 @@ button {
   cursor: text;
 }
 
+/* 已勾选「确认」的行锁定内容编辑，避免确认过的物料被改掉。 */
+.bom-editable-cell.locked {
+  cursor: not-allowed;
+}
+
 .bom-inline-editor {
   display: block;
   width: 100%;
@@ -2154,16 +2867,25 @@ button {
   flex: 0 0 auto;
 }
 
-.bom-action-button.replace:hover {
+.bom-action-button.replace:not(:disabled):hover {
   border-color: #8b7541;
   color: #ead28e;
   background: #393321;
 }
 
-.bom-action-button.delete:hover {
+.bom-action-button.delete:not(:disabled):hover {
   border-color: #8d5149;
   color: #efaa9f;
   background: #3a2521;
+}
+
+/* 已勾选「确认」的行锁定物料：按钮变灰且不响应。 */
+.bom-action-button:disabled {
+  border-color: #3a423b;
+  color: #78857d;
+  background: #1f2621;
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .bom-empty {
@@ -3101,8 +3823,25 @@ button {
   .step-picker-dialog {
     width: 100%;
     height: 100%;
+    grid-template-rows: 62px minmax(0, 1fr) auto;
     border: 0;
     border-radius: 0;
+  }
+
+  .step-picker-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 9px 12px;
+  }
+
+  .step-picker-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 7px;
+  }
+
+  .step-picker-actions button {
+    padding: 0 10px;
   }
 
   .step-picker-body {
@@ -3126,16 +3865,48 @@ button {
     flex: 0 0 82px;
   }
 
-  .step-picker-categories button {
-    width: 144px;
-    flex: 0 0 144px;
+  .step-picker-category-summary {
+    display: none;
+  }
+
+  .step-picker-category-all,
+  .step-picker-group-toggle {
+    width: 150px;
+    flex: 0 0 150px;
     border-bottom: 2px solid transparent;
     border-left: 0;
   }
 
-  .step-picker-categories button.active {
+  .step-picker-category-all.active {
     border-bottom-color: #d0ae54;
     border-left-color: transparent;
+  }
+
+  .step-picker-group {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .step-picker-group.active > .step-picker-group-toggle {
+    border-bottom-color: #d0ae54;
+    background: #29281e;
+  }
+
+  .step-picker-group-items {
+    display: flex;
+    gap: 5px;
+    margin-left: 0;
+    padding: 0;
+    border-left: 0;
+  }
+
+  .step-picker-group-items button {
+    width: 132px;
+    flex: 0 0 132px;
   }
 
   .step-picker-browser {

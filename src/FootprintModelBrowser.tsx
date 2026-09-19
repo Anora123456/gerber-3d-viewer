@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import type { FootprintModel } from './footprint-library'
+import { footprintCategoryOf } from './footprint-categories'
 import { parseStepArrayBuffer } from './step-model'
 
 export interface PreviewFootprintModel extends FootprintModel {
@@ -20,29 +21,13 @@ type PreviewState = 'empty' | 'loading' | 'ready' | 'error'
 
 const previewLoader = new GLTFLoader()
 
-const categoryLabels: Record<string, string> = {
-  connector: '连接器',
-  electromechanical: '机电',
-  mechanical: '结构件',
-  opto: '光电',
-  passive: '无源器件',
-  semiconductor: '半导体',
-  buzzer: '蜂鸣器',
-  capacitor: '电容',
-  crystal: '晶振',
-  diode: '二极管',
-  fuse: '保险丝',
-  ic: '集成电路',
-  inductor: '电感',
-  led: 'LED',
-  resistor: '电阻',
-  switch: '开关',
-  transistor: '晶体管',
-}
+/** 行高必须与 `.model-browser-list button` 的 CSS 保持一致，否则虚拟滚动会错位。 */
+const listRowHeight = 31
+const listOverscan = 10
 
-function modelCategory(model: FootprintModel): string {
-  const directories = model.sourcePath.split('/').filter(Boolean).slice(1, -1)
-  return directories.map((directory) => categoryLabels[directory] ?? directory).join(' / ') || '未分类'
+function modelCategoryLabel(model: FootprintModel): string {
+  const category = footprintCategoryOf(model.sourcePath)
+  return `${category.groupLabel} · ${category.label}`
 }
 
 function disposeModel(root: THREE.Object3D) {
@@ -80,9 +65,36 @@ export default function FootprintModelBrowser({
     const normalizedQuery = query.trim().toLocaleLowerCase()
     if (!normalizedQuery) return sortedModels
     return sortedModels.filter((model) => (
-      `${model.name} ${modelCategory(model)}`.toLocaleLowerCase().includes(normalizedQuery)
+      `${model.name} ${modelCategoryLabel(model)}`.toLocaleLowerCase().includes(normalizedQuery)
     ))
   }, [query, sortedModels])
+
+  const listRef = useRef<HTMLDivElement>(null)
+  const [listScrollTop, setListScrollTop] = useState(0)
+  const [listViewportHeight, setListViewportHeight] = useState(190)
+
+  useEffect(() => {
+    const element = listRef.current
+    if (!element) return
+    const measure = () => setListViewportHeight(element.clientHeight || 190)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  // 切换分类或搜索词时回到列表顶部。
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 })
+    setListScrollTop(0)
+  }, [filteredModels])
+
+  const firstVisibleIndex = Math.max(0, Math.floor(listScrollTop / listRowHeight) - listOverscan)
+  const lastVisibleIndex = Math.min(
+    filteredModels.length,
+    Math.ceil((listScrollTop + listViewportHeight) / listRowHeight) + listOverscan,
+  )
+  const windowedModels = filteredModels.slice(firstVisibleIndex, lastVisibleIndex)
 
   useEffect(() => {
     if (!selectedModel || !canvasRef.current || !previewRef.current) {
@@ -309,28 +321,51 @@ export default function FootprintModelBrowser({
 
       <div className="model-browser-selection">
         <strong title={selectedModel?.name}>{selectedModel?.name ?? '暂无模型'}</strong>
-        <span>{selectedModel ? modelCategory(selectedModel) : '—'}</span>
+        <span>{selectedModel ? modelCategoryLabel(selectedModel) : '—'}</span>
       </div>
 
-      <div className="model-browser-list" role="listbox" aria-label="3D模型列表">
-        {filteredModels.map((model) => (
-          <button
-            type="button"
-            role="option"
-            aria-selected={model.sourcePath === selectedModel?.sourcePath}
-            className={model.sourcePath === selectedModel?.sourcePath ? 'active' : ''}
-            key={model.sourcePath}
-            onClick={() => {
-              setInternalSelectedPath(model.sourcePath)
-              onSelectedModelPathChange?.(model.sourcePath)
-            }}
-            title={`${model.name} · ${modelCategory(model)}`}
+      <div
+        aria-label="3D模型列表"
+        className="model-browser-list"
+        onScroll={(event) => setListScrollTop(event.currentTarget.scrollTop)}
+        ref={listRef}
+        role="listbox"
+      >
+        {filteredModels.length === 0 ? (
+          <span className="model-browser-empty">没有匹配的模型</span>
+        ) : (
+          <div
+            className="model-browser-list-track"
+            role="presentation"
+            style={{ height: filteredModels.length * listRowHeight }}
           >
-            <Cuboid size={13} />
-            <span>{model.name}</span>
-          </button>
-        ))}
-        {filteredModels.length === 0 && <span className="model-browser-empty">没有匹配的模型</span>}
+            <div
+              className="model-browser-list-window"
+              role="presentation"
+              style={{ transform: `translateY(${firstVisibleIndex * listRowHeight}px)` }}
+            >
+              {windowedModels.map((model, index) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-posinset={firstVisibleIndex + index + 1}
+                  aria-selected={model.sourcePath === selectedModel?.sourcePath}
+                  aria-setsize={filteredModels.length}
+                  className={model.sourcePath === selectedModel?.sourcePath ? 'active' : ''}
+                  key={model.sourcePath}
+                  onClick={() => {
+                    setInternalSelectedPath(model.sourcePath)
+                    onSelectedModelPathChange?.(model.sourcePath)
+                  }}
+                  title={`${model.name} · ${modelCategoryLabel(model)}`}
+                >
+                  <Cuboid size={13} />
+                  <span>{model.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   )

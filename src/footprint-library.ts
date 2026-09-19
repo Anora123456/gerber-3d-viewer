@@ -1,4 +1,5 @@
 import type { BomItem, ComponentLibraryItem } from './assembly-data'
+import { footprintCategoryOf } from './footprint-categories'
 import libraryManifestJson from '../footprint/library-manifest.json'
 
 export interface FootprintModel {
@@ -120,27 +121,51 @@ function componentLibraryNameParts(materialName: string): string[] {
     .map((part) => part.trim())
 }
 
-function strongPassiveMatch(parts: string[]): ComponentLibraryFootprintMatch | null {
-  const family = parts[0]?.toLocaleUpperCase()
+/**
+ * 金蝶被动器件物料名固定为 `<族>|<封装>|…`（族 ∈ C / RES / L），
+ * 第二段即封装码（英制尺寸，如 0201 / 0402 / 0603 / 1008）——
+ * 据此可直接在本库里按 KiCad 标准命名定位模型：
+ * `C_0402_1005Metric` / `R_0201_0603Metric` / `L_1008_2520Metric`，
+ * 不依赖 `library-manifest.json` 的别名表（那份清单描述的是已移除的旧 `.glb` 扁平目录）。
+ */
+const passiveFamilyLetters: Record<string, string> = { C: 'C', RES: 'R', L: 'L' }
+const kicadPassiveModelNamePattern = /^(C|R|L)_(\d{3,5})_\d{3,5}Metric$/
+
+const passiveModelByFamilySize = new Map<string, FootprintModel>()
+const passiveModelsInPathOrder = [...footprintModels]
+  .sort((left, right) => left.sourcePath.localeCompare(right.sourcePath))
+passiveModelsInPathOrder.forEach((model) => {
+  const matched = kicadPassiveModelNamePattern.exec(model.name)
+  if (!matched) return
+  const key = `${matched[1]}|${matched[2]}`
+  if (!passiveModelByFamilySize.has(key)) passiveModelByFamilySize.set(key, model)
+})
+
+function passiveFootprintMatch(parts: string[]): ComponentLibraryFootprintMatch | null {
+  const letter = passiveFamilyLetters[parts[0]?.toLocaleUpperCase() ?? '']
   const packageName = parts[1] ?? ''
-  const normalizedPackage = normalizeFootprintName(packageName)
-  if (!normalizedPackage || !['C', 'RES', 'L'].includes(family)) return null
+  if (!letter || !packageName) return null
 
-  const category = family === 'C'
-    ? 'passive/capacitor'
-    : family === 'RES'
-      ? 'passive/resistor'
-      : 'electromechanical/inductor'
-  const candidateAliases = family === 'C'
-    ? new Set([`c${normalizedPackage}`, `c${normalizedPackage}l`])
-    : family === 'RES'
-      ? new Set([`r${normalizedPackage}`, `r${normalizedPackage}l`])
-      : new Set([normalizedPackage, `${normalizedPackage}l`, `l${normalizedPackage}`])
+  // 兼容 `0402L` 这类带尾缀的封装写法。
+  const size = normalizeFootprintName(packageName).replace(/l$/, '')
+  const model = passiveModelByFamilySize.get(`${letter}|${size}`)
+  if (!model) return null
 
-  const pair = sourceModelPairs.find(({ source }) => (
-    source.category === category && candidateAliases.has(source.normalizedAlias)
-  ))
-  return pair ? { ...pair, packageName, forced: true } : null
+  const category = footprintCategoryOf(model.sourcePath)
+  return {
+    source: {
+      alias: packageName,
+      normalizedAlias: size,
+      category: category.folder,
+      file: model.sourcePath.replace(/^\/footprint\//, ''),
+      source: model.name,
+      confidence: 'exact',
+      note: `${parts[0].toLocaleUpperCase()} ${size} 英制封装 → ${model.name}`,
+    },
+    model,
+    packageName,
+    forced: true,
+  }
 }
 
 function itemMatchCandidates(item: BomItem): string[] {
@@ -187,7 +212,7 @@ export function matchComponentLibraryFootprint(
   item: Pick<ComponentLibraryItem, 'materialName'>,
 ): ComponentLibraryFootprintMatch | null {
   const parts = componentLibraryNameParts(item.materialName)
-  const passiveMatch = strongPassiveMatch(parts)
+  const passiveMatch = passiveFootprintMatch(parts)
   if (passiveMatch) return passiveMatch
 
   const normalizedParts = parts.map(normalizeFootprintName).filter(Boolean)

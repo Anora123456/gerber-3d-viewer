@@ -35,9 +35,18 @@ import PcbViewer, {
   type LayerVisibility,
   type PackageOrientation,
 } from './PcbViewer'
+import BomItemReplacePicker from './BomItemReplacePicker'
 import FootprintModelBrowser from './FootprintModelBrowser'
 import KingdeeConnectionPanel from './KingdeeConnectionPanel'
 import StepModelPicker from './StepModelPicker'
+import {
+  materialMatchesFileName,
+  materialMatchesStore,
+  modelBindingsFileName,
+  modelBindingsStore,
+  syncStringMapStore,
+  type StringMap,
+} from './binding-store'
 import {
   parseBomFile,
   parsePlacementFile,
@@ -65,6 +74,8 @@ import {
 import {
   matchBomItemToLibrary,
   matchBomItemsToLibrary,
+  normalizeText,
+  scoreBomLibraryCandidate,
   type BomLibraryMatch,
 } from './component-library-matching'
 import { alignPlacements } from './placement-alignment'
@@ -122,9 +133,16 @@ type PendingBomItem = {
   index: number
 }
 
+/** 「替换元件」的发起方：待处理行（未核对）或核对行（已核对）。 */
+type BomReplaceRequest = {
+  id: string
+  source: 'pending' | 'checked'
+}
+
 type MaterialModelBindings = Record<string, string>
 
 const materialModelBindingsStorageKey = 'fabview.kingdee-step-bindings.v1'
+const materialMatchesStorageKey = 'fabview.kingdee-material-matches.v1'
 const footprintModelByPath = new Map(footprintModels.map((model) => [model.sourcePath, model]))
 const stepFootprintModels = footprintModels.filter((model) => Boolean(model.stepUrl))
 
@@ -200,9 +218,31 @@ function materialModelBindingKey(item: ComponentLibraryItem): string {
   return item.sku.trim() ? `sku:${item.sku.trim()}` : `id:${item.id}`
 }
 
-function loadMaterialModelBindings(): MaterialModelBindings {
+/**
+ * 人工「替换元件」结果的持久化键。取 BOM 行的「描述」（金蝶导出的 BOM 这一列就是
+ * 物料名，重新导入同一份 BOM 时不变）→ 归一化；没有描述时退到物料名称。
+ */
+function materialMatchKey(item: BomItem): string {
+  const source = normalizeText(item.description || item.materialName)
+  return source ? `mat:${source}` : ''
+}
+
+/** 重新导入 BOM 时回放人工核对决定；物料在 ERP 里已不存在则作废（不报错）。 */
+function recallSavedMatch(
+  item: BomItem,
+  library: ParsedComponentLibraryFile | null,
+  savedMatches: StringMap,
+): BomLibraryMatch | null {
+  const key = materialMatchKey(item)
+  const sku = key ? savedMatches[key] : undefined
+  if (!sku) return null
+  const libraryItem = (library?.items ?? []).find((candidate) => candidate.sku === sku)
+  return libraryItem ? { libraryItem, score: scoreBomLibraryCandidate(item, libraryItem) } : null
+}
+
+function loadStringMap(storageKey: string): StringMap {
   try {
-    const parsed = JSON.parse(localStorage.getItem(materialModelBindingsStorageKey) ?? '{}')
+    const parsed = JSON.parse(localStorage.getItem(storageKey) ?? '{}')
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
     return Object.fromEntries(
       Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
@@ -212,11 +252,12 @@ function loadMaterialModelBindings(): MaterialModelBindings {
   }
 }
 
-function saveMaterialModelBindings(bindings: MaterialModelBindings) {
+/** localStorage 现在只是本地缓存 + 服务端不可用时的兜底，工程文件才是准。 */
+function saveStringMap(storageKey: string, entries: StringMap) {
   try {
-    localStorage.setItem(materialModelBindingsStorageKey, JSON.stringify(bindings))
+    localStorage.setItem(storageKey, JSON.stringify(entries))
   } catch {
-    // The active binding still works when browser storage is unavailable.
+    // 浏览器存储不可用时，内存里的绑定依然生效。
   }
 }
 
@@ -244,7 +285,10 @@ function App() {
   const [componentLibraryQuery, setComponentLibraryQuery] = useState('')
   const [componentLibraryFieldFilter, setComponentLibraryFieldFilter] = useState<string | null>(null)
   const [materialModelBindings, setMaterialModelBindings] = useState<MaterialModelBindings>(
-    loadMaterialModelBindings,
+    () => loadStringMap(materialModelBindingsStorageKey),
+  )
+  const [materialMatches, setMaterialMatches] = useState<StringMap>(
+    () => loadStringMap(materialMatchesStorageKey),
   )
   const [manualModelTargetId, setManualModelTargetId] = useState<string | null>(null)
   const [selectedLibraryItemId, setSelectedLibraryItemId] = useState<string | null>(null)
@@ -258,6 +302,7 @@ function App() {
   const [bomSelectionRevision, setBomSelectionRevision] = useState(0)
   const [bomCellEdit, setBomCellEdit] = useState<BomCellEdit | null>(null)
   const [pendingBomItems, setPendingBomItems] = useState<PendingBomItem[]>([])
+  const [bomReplaceRequest, setBomReplaceRequest] = useState<BomReplaceRequest | null>(null)
   const [bomColumnWidths, setBomColumnWidths] = useState(defaultBomColumnWidths)
   const [resizingBomColumn, setResizingBomColumn] = useState<BomColumnKey | null>(null)
   const bomColumnDragRef = useRef<{
@@ -341,6 +386,33 @@ function App() {
   }, [])
 
   useEffect(() => {
+    // 绑定记录以工程文件（footprint/*.json）为准；服务端不可用时回落到本机缓存，
+    // 并在首次连通时把本机已有记录迁移上去。
+    let cancelled = false
+    void (async () => {
+      const [bindings, matches] = await Promise.all([
+        syncStringMapStore(modelBindingsStore, loadStringMap(materialModelBindingsStorageKey)),
+        syncStringMapStore(materialMatchesStore, loadStringMap(materialMatchesStorageKey)),
+      ])
+      if (cancelled) return
+      setMaterialModelBindings(bindings.entries)
+      setMaterialMatches(matches.entries)
+      if (bindings.source !== 'local') saveStringMap(materialModelBindingsStorageKey, bindings.entries)
+      if (matches.source !== 'local') saveStringMap(materialMatchesStorageKey, matches.entries)
+      const unsynced = [
+        bindings.source === 'local' && Object.keys(bindings.entries).length > 0 ? modelBindingsFileName : '',
+        matches.source === 'local' && Object.keys(matches.entries).length > 0 ? materialMatchesFileName : '',
+      ].filter(Boolean)
+      if (unsynced.length > 0) {
+        setError(`未连接到本地服务，绑定记录暂时只在本机浏览器里，未能写入 ${unsynced.join('、')}（请确认 npm run api 正在运行）`)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     if (!componentLibraryPageOpen) return
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
@@ -396,9 +468,12 @@ function App() {
     const matchedItems: BomItem[] = []
     const unmatchedItems: PendingBomItem[] = []
     source.items.forEach((item, index) => {
-      const match = matches.get(item.id)
-      if (match) matchedItems.push(enrichBomItemFromLibrary(item, match.libraryItem))
-      else unmatchedItems.push({ item, index })
+      // 自动核对不出来的，回放人工「替换元件」的历史决定。
+      const match = matches.get(item.id) ?? recallSavedMatch(item, library, materialMatches)
+      if (match) {
+        matches.set(item.id, match)
+        matchedItems.push(enrichBomItemFromLibrary(item, match.libraryItem))
+      } else unmatchedItems.push({ item, index })
     })
     setBomData({ ...source, items: matchedItems })
     setPendingBomItems(unmatchedItems)
@@ -604,11 +679,35 @@ function App() {
   const bomFootprintModelOverrides = useMemo(() => {
     const overrides = new Map<string, FootprintModel>()
     bomLibraryMatches.forEach((match, bomItemId) => {
+      // 手动绑定优先；未手动绑定时回落到元件库的自动匹配（与元件库表格同一判定）。
       const model = manualLibraryModels.get(match.libraryItem.id)
+        ?? componentLibraryFootprintMatches.get(match.libraryItem.id)?.model
       if (model) overrides.set(bomItemId, model)
     })
     return overrides
-  }, [bomLibraryMatches, manualLibraryModels])
+  }, [bomLibraryMatches, componentLibraryFootprintMatches, manualLibraryModels])
+  const bomReplaceTarget = useMemo(() => {
+    if (!bomReplaceRequest) return null
+    if (bomReplaceRequest.source === 'pending') {
+      const entry = pendingBomItems.find((candidate) => candidate.item.id === bomReplaceRequest.id)
+      return entry ? { kind: 'pending' as const, item: entry.item, entry } : null
+    }
+    const item = bomData?.items.find((candidate) => candidate.id === bomReplaceRequest.id)
+    return item ? { kind: 'checked' as const, item } : null
+  }, [bomData, bomReplaceRequest, pendingBomItems])
+  const bomReplaceCandidates = useMemo(() => {
+    if (!bomReplaceTarget) return []
+    return (componentLibraryData?.items ?? [])
+      .map((libraryItem) => ({
+        libraryItem,
+        score: scoreBomLibraryCandidate(bomReplaceTarget.item, libraryItem),
+      }))
+      .filter((candidate) => candidate.score > 0)
+      .sort((left, right) => (
+        right.score - left.score
+        || left.libraryItem.materialName.localeCompare(right.libraryItem.materialName, 'zh-CN')
+      ))
+  }, [bomReplaceTarget, componentLibraryData])
   const confirmedBomCount = useMemo(
     () => bomData?.items.filter((item) => confirmedBomIds.has(item.id)).length ?? 0,
     [bomData, confirmedBomIds],
@@ -754,7 +853,14 @@ function App() {
     setBomSelectionRevision((revision) => revision + 1)
   }
 
+  const clearBomSelection = () => {
+    setBomCellEdit(null)
+    setSelectedBomId(null)
+  }
+
   const startBomCellEdit = (item: BomItem, field: BomCellEdit['field']) => {
+    // 已勾选「确认」的行锁定内容：确认过的物料不该被再改掉，先取消勾选再编辑。
+    if (confirmedBomIds.has(item.id)) return
     setBomCellEdit({
       itemId: item.id,
       field,
@@ -826,6 +932,70 @@ function App() {
     }
   }
 
+  /** 人工替换的统一落盘：键取「原始 BOM 描述」，重导 BOM 后（无论当时是待处理还是已核对）都能对上同一条。 */
+  const persistMaterialMatch = (item: BomItem, libraryItem: ComponentLibraryItem) => {
+    const sku = libraryItem.sku.trim()
+    if (!sku) return
+    const original = sourceBomData?.items.find((candidate) => candidate.id === item.id) ?? item
+    const key = materialMatchKey(original)
+    if (!key) return
+    setMaterialMatches((current) => {
+      const next = { ...current, [key]: sku }
+      persistMaterialMatches(next)
+      return next
+    })
+  }
+
+  const replacePendingBomItem = (
+    entry: PendingBomItem,
+    libraryItem: ComponentLibraryItem,
+    score: number,
+  ) => {
+    const replacedItem = enrichBomItemFromLibrary(entry.item, libraryItem)
+    setPendingBomItems((current) => current.filter((candidate) => candidate.item.id !== entry.item.id))
+    setBomData((current) => {
+      if (!current || current.items.some((item) => item.id === entry.item.id)) return current
+      const items = [...current.items]
+      items.splice(Math.min(entry.index, items.length), 0, replacedItem)
+      return { ...current, items }
+    })
+    setBomLibraryMatches((current) => new Map(current).set(entry.item.id, { libraryItem, score }))
+    persistMaterialMatch(entry.item, libraryItem)
+  }
+
+  /** 已核对行的替换：行留在核对表格，只换绑定的金蝶物料。 */
+  const replaceCheckedBomItem = (
+    item: BomItem,
+    libraryItem: ComponentLibraryItem,
+    score: number,
+  ) => {
+    setBomData((current) => current
+      ? {
+          ...current,
+          items: current.items.map((candidate) => (
+            candidate.id === item.id ? enrichBomItemFromLibrary(candidate, libraryItem) : candidate
+          )),
+        }
+      : current)
+    setBomLibraryMatches((current) => new Map(current).set(item.id, { libraryItem, score }))
+    // 物料换了，之前对这行的「确认」不再成立。
+    setConfirmedBomIds((current) => {
+      if (!current.has(item.id)) return current
+      const next = new Set(current)
+      next.delete(item.id)
+      return next
+    })
+    persistMaterialMatch(item, libraryItem)
+  }
+
+  const applyBomReplacePick = (libraryItem: ComponentLibraryItem, score: number) => {
+    const target = bomReplaceTarget
+    if (!target) return
+    if (target.kind === 'pending') replacePendingBomItem(target.entry, libraryItem, score)
+    else replaceCheckedBomItem(target.item, libraryItem, score)
+    setBomReplaceRequest(null)
+  }
+
   const selectComponentLibraryItem = (itemId: string) => {
     const previewModel = manualLibraryModels.get(itemId)
       ?? componentLibraryFootprintMatches.get(itemId)?.model
@@ -838,13 +1008,29 @@ function App() {
     setManualModelTargetId(itemId)
   }
 
+  const persistModelBindings = (next: MaterialModelBindings) => {
+    saveStringMap(materialModelBindingsStorageKey, next)
+    void modelBindingsStore.write(next).then((ok) => {
+      if (ok) return
+      setError(`模型绑定已存在本机浏览器，但未能写入 ${modelBindingsFileName}（请确认 npm run api 正在运行）`)
+    })
+  }
+
+  const persistMaterialMatches = (next: StringMap) => {
+    saveStringMap(materialMatchesStorageKey, next)
+    void materialMatchesStore.write(next).then((ok) => {
+      if (ok) return
+      setError(`物料核对结果已存在本机浏览器，但未能写入 ${materialMatchesFileName}（请确认 npm run api 正在运行）`)
+    })
+  }
+
   const bindManualModel = (item: ComponentLibraryItem, model: FootprintModel) => {
     setMaterialModelBindings((current) => {
       const next = {
         ...current,
         [materialModelBindingKey(item)]: model.sourcePath,
       }
-      saveMaterialModelBindings(next)
+      persistModelBindings(next)
       return next
     })
     setSelectedLibraryItemId(item.id)
@@ -857,7 +1043,7 @@ function App() {
     setMaterialModelBindings((current) => {
       const next = { ...current }
       delete next[materialModelBindingKey(item)]
-      saveMaterialModelBindings(next)
+      persistModelBindings(next)
       return next
     })
     setSelectedLibraryItemId(item.id)
@@ -1383,7 +1569,15 @@ function App() {
                         className={[isConfirmed ? 'confirmed' : '', isSelected ? 'selected' : ''].filter(Boolean).join(' ')}
                         data-bom-id={item.id}
                         key={item.id}
-                        onClickCapture={() => selectBomItem(item.id)}
+                        onClick={(event) => {
+                          // 勾选框 / 动作按钮 / 内联编辑器自己处理点击。
+                          // 这里是冒泡阶段而不是捕获阶段：若在捕获阶段就 setState，React 会在
+                          // click 的捕获分发结束时先提交一次重渲染，把受控勾选框恢复成未勾选，
+                          // 随后的 onChange 检测不到变化 → 勾选框点不动。
+                          const target = event.target
+                          if (target instanceof Element && target.closest('input, button, .bom-inline-editor')) return
+                          selectBomItem(item.id)
+                        }}
                         onKeyDown={(event) => {
                           if (event.target !== event.currentTarget) return
                           if (event.key === 'Enter') {
@@ -1409,8 +1603,10 @@ function App() {
                           {item.sku || '—'}
                         </td>
                         <td
-                          className="bom-name bom-editable-cell"
-                          title={item.materialName}
+                          className={`bom-name bom-editable-cell${isConfirmed ? ' locked' : ''}`}
+                          title={isConfirmed
+                            ? `${item.materialName}（已确认，取消勾选后可编辑）`
+                            : item.materialName}
                           onDoubleClick={(event) => {
                             event.stopPropagation()
                             startBomCellEdit(item, 'materialName')
@@ -1438,8 +1634,8 @@ function App() {
                           ) : item.materialName || '—'}
                         </td>
                         <td
-                          className="bom-spec bom-editable-cell"
-                          title={details}
+                          className={`bom-spec bom-editable-cell${isConfirmed ? ' locked' : ''}`}
+                          title={isConfirmed ? `${details}（已确认，取消勾选后可编辑）` : details}
                           onDoubleClick={(event) => {
                             event.stopPropagation()
                             startBomCellEdit(item, 'spec')
@@ -1475,12 +1671,18 @@ function App() {
                         </td>
                         <td className="bom-quantity">{item.quantity}</td>
                         <td className="bom-actions">
-                          <div className="bom-action-buttons">
+                          {/* 勾选「确认」后整行锁定：既不能改内容，也不能替换/删除。
+                              提示挂在这个容器上——禁用的 button 不会弹出自身 title。 */}
+                          <div
+                            className="bom-action-buttons"
+                            title={isConfirmed ? '已确认，取消勾选后可替换或删除元件' : undefined}
+                          >
                             <button
                               className="bom-action-button replace"
                               type="button"
-                              onClick={() => setSelectedBomId(item.id)}
-                              title={`替换元件 ${bomPrimaryText(item)}`}
+                              disabled={isConfirmed}
+                              onClick={() => setBomReplaceRequest({ id: item.id, source: 'checked' })}
+                              title={isConfirmed ? undefined : `替换元件 ${bomPrimaryText(item)}`}
                             >
                               <RefreshCw size={12} />
                               <span>替换元件</span>
@@ -1488,8 +1690,9 @@ function App() {
                             <button
                               className="bom-action-button delete"
                               type="button"
+                              disabled={isConfirmed}
                               onClick={() => moveBomItemToPending(item)}
-                              title={`删除元件 ${bomPrimaryText(item)}`}
+                              title={isConfirmed ? undefined : `删除元件 ${bomPrimaryText(item)}`}
                             >
                               <Trash2 size={12} />
                               <span>删除元件</span>
@@ -1550,6 +1753,15 @@ function App() {
                           <td className="bom-actions">
                             <div className="bom-action-buttons pending-actions">
                               <button
+                                className="bom-action-button replace"
+                                type="button"
+                                onClick={() => setBomReplaceRequest({ id: item.id, source: 'pending' })}
+                                title={`替换元件 ${bomPrimaryText(item)}`}
+                              >
+                                <RefreshCw size={12} />
+                                <span>替换元件</span>
+                              </button>
+                              <button
                                 className="bom-action-button restore"
                                 type="button"
                                 onClick={() => restorePendingBomItem(entry)}
@@ -1592,6 +1804,7 @@ function App() {
             selectionRevision={bomSelectionRevision}
             bomRowOrientations={bomRowOrientations}
             onComponentSelect={selectBomItemByDesignator}
+            onClearSelection={clearBomSelection}
           />
 
           <div className="bom-row-orientation-controls" aria-label="选中 BOM 行方向调整">
@@ -1677,6 +1890,19 @@ function App() {
         <span>{board?.issues.length ? `${board.issues.length} 条解析提示` : '解析正常'}</span>
         <span>WebGL</span>
       </footer>
+
+      {bomReplaceTarget && componentLibraryData && (
+        <BomItemReplacePicker
+          candidates={bomReplaceCandidates}
+          currentSku={bomReplaceTarget.kind === 'checked' ? bomReplaceTarget.item.sku : ''}
+          footprintMatches={componentLibraryFootprintMatches}
+          item={bomReplaceTarget.item}
+          libraryItems={componentLibraryData.items}
+          mode={bomReplaceTarget.kind}
+          onClose={() => setBomReplaceRequest(null)}
+          onPick={applyBomReplacePick}
+        />
+      )}
 
       {componentLibraryPageOpen && (
         <section className="library-page" role="dialog" aria-modal="true" aria-label="金蝶 ERP 元件库">

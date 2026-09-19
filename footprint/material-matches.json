@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "updated_at": "2026-09-19T16:46:42+00:00",
+  "matches": {
+    "mat:c0402100nfk25v风华": "23020083",
+    "mat:c0402100pfj50v三星": "23020010",
+    "mat:c040210nfk50v三星": "23020071",
+    "mat:c04024.7ufm16v太诱": "23020069",
+    "mat:c040247pfj50v风华": "23020066",
+    "mat:c0603100nfk25v三星": "23030032",
+    "mat:c060310ufm25v村田": "23030033",
+    "mat:c06032.2ufk50v三星": "23030024",
+    "mat:c080522ufm35vtdk": "23040006",
+    "mat:c120610ufk35v三星": "23050005",
+    "mat:c120647ufm25v村田": "23050003",
+    "mat:cs电解电容47uf6.3x5.4m35vst贴片": "23060005",
+    "mat:fuse120616v3abhfuse佰宏": "29030010",
+    "mat:icmcuapm32f103ret6lqfp64极海托盘": "21010058",
+    "mat:lmwsa0503s1r0mt1.0uh7.8a功率电感顺络": "24010114",
+    "mat:res040220kb50ppm116w薄膜电阻厚声": "22020140",
+    "mat:res120610mrf1wmillir毫欧": "22050005",
+    "mat:stm32armbased32bitmcuperformancelinewith512kbflash64kbinternalram40to85癈temperature64pinlqfptray": "21010058",
+    "mat:usbtypec母头typec304jbcp165a有固定柱卧贴xunpu编带": "27010012"
+  }
+}

@@ -13,6 +13,7 @@ vite.config.d.ts
 
 # Local KiCad 3D model library (large runtime data)
 /footprint/3dmodels/
+/footprint/*.zip
 
 # Local environment and logs
 .env
