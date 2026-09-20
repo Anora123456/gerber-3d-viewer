@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Database, Eye, EyeOff, LoaderCircle } from 'lucide-react'
+import { Database, Eye, EyeOff, LoaderCircle, RefreshCw } from 'lucide-react'
 import {
   fetchKingdeeConfig,
   probeKingdeeConnection,
@@ -31,8 +31,10 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
   const formRef = useRef<HTMLFormElement>(null)
   const [config, setConfig] = useState<KingdeeConfig>(emptyConfig)
   const [configLoaded, setConfigLoaded] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [hasSavedSecret, setHasSavedSecret] = useState(false)
   const [secretVisible, setSecretVisible] = useState(false)
+  const [probeRevision, setProbeRevision] = useState(0)
   const [busy, setBusy] = useState<'load' | 'probe' | 'enter' | null>('load')
   const [connectionState, setConnectionState] = useState<ConnectionState>('checking')
   const [status, setStatus] = useState('正在读取本机配置...')
@@ -47,12 +49,16 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
         const loadedConfig: KingdeeConfig = { ...emptyConfig, ...saved, protocol: 'v4', app_secret: '' }
         setConfig(loadedConfig)
         setHasSavedSecret(saved.has_app_secret)
+        setLoadError(null)
         setConfigLoaded(true)
       } catch (error) {
         if (cancelled) return
+        const message = error instanceof Error ? error.message : '无法读取本机配置'
+        setLoadError(message)
+        setConfigLoaded(true)
         setConnectionState('disconnected')
         onConnectionChange(false)
-        setStatus(error instanceof Error ? error.message : '无法读取本机配置')
+        setStatus(message)
       } finally {
         if (!cancelled) setBusy(null)
       }
@@ -72,9 +78,10 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
       && (hasSavedSecret || config.app_secret),
     )
     if (!hasRequiredFields) {
+      setBusy(null)
       setConnectionState('disconnected')
       onConnectionChange(false)
-      setStatus(hasSavedSecret ? '请填写完整的金蝶连接信息' : '请填写完整的连接信息和应用密钥')
+      setStatus(loadError ?? (hasSavedSecret ? '请填写完整的金蝶连接信息' : '请填写完整的连接信息和应用密钥'))
       return
     }
 
@@ -92,7 +99,9 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
           setConnectionState(connected ? 'connected' : 'disconnected')
           onConnectionChange(connected)
           setStatus(connected
-            ? `连接成功 · ${result.elapsed_ms} ms · 已验证物料权限`
+            ? result.sample_count === 0
+              ? `连接成功 · ${result.elapsed_ms} ms；当前筛选条件下无电子物料，请检查使用组织及编码范围`
+              : `连接成功 · ${result.elapsed_ms} ms · 已验证物料权限`
             : '金蝶服务已响应，但没有检测到可访问的电子物料')
         } catch (error) {
           if (cancelled) return
@@ -110,9 +119,10 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [config, configLoaded, hasSavedSecret, onConnectionChange])
+  }, [config, configLoaded, hasSavedSecret, loadError, onConnectionChange, probeRevision])
 
   const update = <Key extends keyof KingdeeConfig>(key: Key, value: KingdeeConfig[Key]) => {
+    setLoadError(null)
     setConfig((current) => ({ ...current, [key]: value }))
     setConnectionState('disconnected')
     onConnectionChange(false)
@@ -126,6 +136,10 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
       return false
     }
     return true
+  }
+
+  const handleProbe = () => {
+    if (formIsValid()) setProbeRevision((revision) => revision + 1)
   }
 
   const handleEnter = async () => {
@@ -244,6 +258,15 @@ export default function KingdeeConnectionPanel({ onConnectionChange, onEnter }: 
             <span>{status}</span>
           </div>
         </div>
+        <button
+          className="kingdee-probe-button"
+          type="button"
+          onClick={handleProbe}
+          disabled={!configLoaded || busy !== null}
+        >
+          {busy === 'probe' ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}
+          <span>测试连接</span>
+        </button>
         <button
           className="kingdee-enter-button"
           type="button"

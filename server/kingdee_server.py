@@ -101,6 +101,18 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def probe_connection(config: dict[str, Any]) -> dict[str, Any]:
+    started = time.perf_counter()
+    client = KingdeeClient(credentials_from_config(config), timeout=15.0)
+    sample = client.query_materials(1, 1)
+    return {
+        "ok": True,
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+        "material_access": True,
+        "sample_count": len(sample["items"]),
+    }
+
+
 def merge_config(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     result = dict(existing)
     for field in PUBLIC_FIELDS:
@@ -673,14 +685,7 @@ class FabViewHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/kingdee/probe":
                 config = merge_config(read_config(self.config_path), payload)
-                started = time.perf_counter()
-                client = KingdeeClient(credentials_from_config(config), timeout=15.0)
-                sample = client.query_materials(1, 1)
-                self._send_json({
-                    "ok": True,
-                    "elapsed_ms": round((time.perf_counter() - started) * 1000),
-                    "material_access": len(sample["items"]) > 0,
-                })
+                self._send_json(probe_connection(config))
                 return
             self._send_json({"error": "接口不存在"}, HTTPStatus.NOT_FOUND)
         except (ValueError, KingdeeAPIError) as exc:

@@ -37,20 +37,31 @@ interface KingdeeProbeResult {
   ok: boolean
   elapsed_ms: number
   material_access: boolean
+  sample_count: number
 }
 
 const API_ROOT = '/api/kingdee'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_ROOT}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(`${API_ROOT}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...init?.headers,
+      },
+    })
+  } catch {
+    throw new Error('无法连接本机 API，请先启动 npm run api（端口 8765）')
+  }
   const payload = await response.json().catch(() => ({})) as { error?: string }
-  if (!response.ok) throw new Error(payload.error || `金蝶接口请求失败 (${response.status})`)
+  if (!response.ok) {
+    if (!payload.error && response.status >= 500) {
+      throw new Error('本机 API 未响应，请检查 npm run api（端口 8765）')
+    }
+    throw new Error(payload.error || `金蝶接口请求失败 (${response.status})`)
+  }
   return payload as T
 }
 

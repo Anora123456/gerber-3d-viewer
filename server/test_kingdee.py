@@ -15,6 +15,7 @@ from server.kingdee_server import (
     is_package_filename,
     merge_config,
     model_filename,
+    probe_connection,
     public_config,
     read_config,
     store_footprint_archive,
@@ -53,6 +54,39 @@ class ConfigStoreTests(unittest.TestCase):
 
 
 class MaterialQueryTests(unittest.TestCase):
+    def test_probe_accepts_successful_empty_material_query(self):
+        config = {
+            "base_url": "https://example.com/K3Cloud/",
+            "dbid": "test-db",
+            "username": "test-user",
+            "appid": "test-app",
+            "app_secret": "test-secret",
+            "lcid": "2052",
+            "org_number": "100",
+        }
+        with patch.object(kingdee_server_module, "KingdeeClient") as client_class:
+            client_class.return_value.query_materials.return_value = {"items": []}
+            result = probe_connection(config)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["material_access"])
+        self.assertEqual(result["sample_count"], 0)
+        client_class.return_value.query_materials.assert_called_once_with(1, 1)
+
+    def test_probe_propagates_material_query_failure(self):
+        config = {
+            "base_url": "https://example.com/K3Cloud/",
+            "dbid": "test-db",
+            "username": "test-user",
+            "appid": "test-app",
+            "app_secret": "test-secret",
+            "lcid": "2052",
+            "org_number": "100",
+        }
+        with patch.object(kingdee_server_module, "KingdeeClient") as client_class:
+            client_class.return_value.query_materials.side_effect = ValueError("no access")
+            with self.assertRaisesRegex(ValueError, "no access"):
+                probe_connection(config)
+
     def test_filter_contains_electronic_material_prefixes_and_org(self):
         result = material_filter(org_number="100")
         for prefix in range(21, 30):
